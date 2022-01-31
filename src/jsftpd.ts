@@ -7,7 +7,7 @@
 
 import tls, { TlsOptions } from "tls";
 import util from "util";
-import net, { Socket, SocketAddress } from "net";
+import net, { Socket, AddressInfo } from "net";
 import path from "path";
 import fs from "fs";
 import { EventEmitter } from "events";
@@ -18,26 +18,79 @@ const defaultCert = Buffer.from(
   "base64"
 );
 
-const TLSserverDefaults = {
-  key: defaultCert,
-  cert: defaultCert,
-  honorCipherOrder: true,
-  rejectUnauthorized: false,
+interface FTPCmdHandlers {
+  upload: (
+    username: string,
+    folder: string,
+    file: string,
+    data: Buffer,
+    restOffset: number
+  ) => Promise<void>;
+  download: (
+    username: string,
+    folder: string,
+    file: string,
+    restOffset: number
+  ) => Promise<Buffer>;
+  list: (username: string, folder: string, format: FTPCmdLsFormat) => [string];
+  rename: (
+    username: string,
+    folder: string,
+    fromFile: string,
+    toFile: string
+  ) => Promise<void>;
+}
+
+type UserCredential = {
+  username: string,
+  password?: string,
+  basefolder?: string;
+}
+
+type UserOptions = {
+  allowLoginWithoutPassword?: boolean;
+  allowUserFileCreate?: boolean;
+  allowUserFileRetrieve?: boolean;
+  allowUserFileOverwrite?: boolean;
+  allowUserFileDelete?: boolean;
+  allowUserFileRename?: boolean;
+  allowUserFolderDelete?: boolean;
+  allowUserFolderCreate?: boolean;
 };
 
-const HandlerDefaults = {
-  upload: async function () {},
-  download: async function () {},
-  list: async function () {},
-  rename: async function () {},
+type FTPdOptions = UserOptions & {
+  port?: number;
+  securePort?: number;
+  maxConnections?: number;
+  minDataPort?: number;
+  basefolder?: string;
+
+  allowAnonymousLogin?: boolean;
+  allowAnonymousFileCreate?: boolean;
+  allowAnonymousFileRetrieve?: boolean;
+  allowAnonymousFileOverwrite?: boolean;
+  allowAnonymousFileDelete?: boolean;
+  allowAnonymousFileRename?: boolean;
+  allowAnonymousFolderDelete?: boolean;
+  allowAnonymousFolderCreate?: boolean;
+  
+  username?: string;
+  password?: string;
+  allowLoginWithoutPassword?: boolean;
+
+  user?: (UserCredential & UserOptions)[];
 };
 
-const FTPdefaults = {
+type FTPCmdLsFormat = "MSLD" | null;
+
+const FTPdefaults: FTPdOptions = {
   port: 21,
   securePort: 990,
   maxConnections: 10,
+  minDataPort: 1024,
   basefolder: defaultBaseFolder,
-  user: [],
+  
+  allowAnonymousLogin: false,
   allowAnonymousFileCreate: false,
   allowAnonymousFileRetrieve: false,
   allowAnonymousFileOverwrite: false,
@@ -45,11 +98,18 @@ const FTPdefaults = {
   allowAnonymousFileRename: false,
   allowAnonymousFolderDelete: false,
   allowAnonymousFolderCreate: false,
-  allowAnonymousLogin: false,
-  minDataPort: 1024,
+  
+  user: [],
 };
 
-const UserDefaults = {
+const TLSserverDefaults: TlsOptions = {
+  key: defaultCert,
+  cert: defaultCert,
+  honorCipherOrder: true,
+  rejectUnauthorized: false,
+};
+
+const UserDefaults: UserOptions = {
   allowLoginWithoutPassword: false,
   allowUserFileCreate: true,
   allowUserFileRetrieve: true,
@@ -60,33 +120,29 @@ const UserDefaults = {
   allowUserFolderCreate: true,
 };
 
-const LoginType = Object.freeze({
-  None: 0,
-  Anonymous: 1,
-  Password: 2,
-  NoPassword: 3,
-});
-
-type FTPdOptions = {
-  tls: TlsOptions;
+enum LoginType {
+  None,
+  Anonymous,
+  Password,
+  NoPassword,
 };
 
-export function ftpd(options: FTPdOptions) {
+export function ftpd(options: FTPdOptions & { cnf?: FTPdOptions, tls?: TlsOptions, hdl?: FTPCmdHandlers }) {
   let lastSessionKey = 0;
   const openSessions = {};
 
   // options
-  const _useTLS = options && Object.keys(options).indexOf("tls") > -1;
-  const _useHdl = options && Object.keys(options).indexOf("hdl") > -1;
-  const _opt = {
+  const usingTLS = "tls" in options;
+  const usingHandlers = "hdl" in options;
+  const config = {
+    ...FTPdefaults, ...UserDefaults, ...options, ...options.cnf,
     tls: { ...TLSserverDefaults, ...options?.tls },
-    hdl: { ...HandlerDefaults, ...options?.hdl },
-    cnf: { ...FTPdefaults, ...UserDefaults, ...options?.cnf },
+    handler: options?.hdl,
   };
 
   // checks
-  if (!folderExists(_opt.cnf.basefolder)) {
-    if (_opt.cnf.basefolder === defaultBaseFolder) {
+  if (!folderExists(config.basefolder)) {
+    if (config.basefolder === defaultBaseFolder) {
       fs.mkdirSync(defaultBaseFolder);
     } else {
       throw new Error("Basefolder must exist");
@@ -94,23 +150,23 @@ export function ftpd(options: FTPdOptions) {
   }
 
   // setup FTP on TCP
-  const _tcp = net.createServer();
-  _tcp.on("error", ErrorHandler);
-  _tcp.on("listening", (server) => {
+  const tcpServer = net.createServer();
+  tcpServer.on("error", ErrorHandler);
+  tcpServer.on("listening", (server) => {
     emitListen("tcp", server.address());
   });
-  _tcp.on("connection", SessionHandler);
-  _tcp.maxConnections = _opt.cnf.maxConnections;
+  tcpServer.on("connection", SessionHandler);
+  tcpServer.maxConnections = config.maxConnections;
 
   // setup FTP on TLS
-  const _tls = _useTLS && tls.createServer(_opt.tls);
-  if (_useTLS) {
-    _tls.on("error", ErrorHandler);
-    _tls.on("listening", (server) => {
+  const tlsServer = usingTLS && tls.createServer(config.tls);
+  if (usingTLS) {
+    tlsServer.on("error", ErrorHandler);
+    tlsServer.on("listening", (server) => {
       emitListen("tls", server.address());
     });
-    _tls.on("secureConnection", SessionHandler);
-    _tls.maxConnections = _opt.cnf.maxConnections;
+    tlsServer.on("secureConnection", SessionHandler);
+    tlsServer.maxConnections = config.maxConnections;
   }
 
   function SessionHandler(cmdSocket) {
@@ -128,7 +184,7 @@ export function ftpd(options: FTPdOptions) {
     let asciiOn = false;
 
     let pasv = true;
-    let pasvChannel = null;
+    let pasvChannel: net.Server = null;
     let setPasvSocket,
       pasvSocket = new Promise<Socket>((resolve, reject) => {
         setPasvSocket = { resolve, reject };
@@ -148,7 +204,7 @@ export function ftpd(options: FTPdOptions) {
     let allowFolderDelete = false;
     let allowFolderCreate = false;
 
-    let basefolder: string = _opt.cnf.basefolder;
+    let basefolder: string = config.basefolder;
     let folderPath = "/";
     let renameFile = "";
     let restOffset = 0;
@@ -297,7 +353,7 @@ export function ftpd(options: FTPdOptions) {
           cmdSocket.respond("234", `Using authentication type ${arg}`);
           cmdSocket = new tls.TLSSocket(cmdSocket, {
             isServer: true,
-            secureContext: tls.createSecureContext(_opt.tls),
+            secureContext: tls.createSecureContext(config.tls),
           });
           cmdSocket.on("secure", () => {
             DebugHandler(`${remoteInfo} secure connection established`);
@@ -407,18 +463,18 @@ export function ftpd(options: FTPdOptions) {
         pasv = false;
         actv = false;
         openPassiveChannel().then(
-          (address) => {
+          (port) => {
             pasv = true;
             DebugHandler(
-              `${remoteInfo} listening on ${address.port} for data connection`
+              `${remoteInfo} listening on ${port} for data connection`
             );
             cmdSocket.respond(
               "227",
               util.format(
                 "Entering passive mode (%s,%d,%d)",
                 localAddr.split(".").join(","),
-                (address.port / 256) | 0,
-                address.port % 256
+                (port / 256) | 0,
+                port % 256
               )
             );
           },
@@ -452,16 +508,16 @@ export function ftpd(options: FTPdOptions) {
         pasv = false;
         actv = false;
         openPassiveChannel().then(
-          (address) => {
+          (port) => {
             pasv = true;
             DebugHandler(
-              `${remoteInfo} listening on ${address.port} for data connection`
+              `${remoteInfo} listening on ${port} for data connection`
             );
             cmdSocket.respond(
               "229",
               util.format(
                 "Entering extended passive mode (|||%d|)",
-                address.port
+                port
               )
             );
           },
@@ -588,12 +644,12 @@ export function ftpd(options: FTPdOptions) {
       function LIST(cmd, arg) {
         openDataSocket()
           .then((socket) => {
-            const listData =
-              folderList(username, [basefolder, folderPath], cmd) || "\r\n";
+            const folderListing =
+              folderList(username, [basefolder, folderPath], cmd).join("\r\n");
             DebugHandler(
-              `${remoteInfo} LIST response on data channel\r\n${listData}`
+              `${remoteInfo} LIST response on data channel\r\n${folderListing}`
             );
-            socket.end(Buffer.from(listData));
+            socket.end(Buffer.from(folderListing || "\r\n"));
           })
           .then(
             () => {
@@ -748,7 +804,7 @@ export function ftpd(options: FTPdOptions) {
         } else {
           fileRename(
             username,
-            folderPath,
+            [basefolder, folderPath],
             renameFile.substring(basefolder.length),
             file.substring(basefolder.length)
           )
@@ -827,20 +883,20 @@ export function ftpd(options: FTPdOptions) {
           setPasvSocket = { resolve, reject };
         });
       }
-      return new Promise<SocketAddress>((resolve) => {
+      return new Promise<number>((resolve) => {
         if (isEncrypted === true && shouldProtect === true) {
-          pasvChannel = tls.Server(_opt.tls);
+          pasvChannel = new tls.Server(config.tls);
           pasvChannel.on("secureConnection", (socket) => {
             DebugHandler(`${remoteInfo} secure data connection established`);
             setPasvSocket.resolve(socket);
           });
         } else {
-          pasvChannel = net.Server();
+          pasvChannel = new net.Server();
           pasvChannel.on("connection", (socket) => {
             if (isEncrypted === true && shouldProtect === true) {
               socket = new tls.TLSSocket(socket, {
                 isServer: true,
-                secureContext: tls.createSecureContext(_opt.tls),
+                secureContext: tls.createSecureContext(config.tls),
               });
               socket.on("secure", () => {
                 DebugHandler(`${remoteInfo} data connection is secure`);
@@ -855,16 +911,16 @@ export function ftpd(options: FTPdOptions) {
         pasvChannel.on("error", ErrorHandler);
         pasvChannel.maxConnections = 1;
         return findAvailablePort().then((port) => {
-          pasvChannel.listen(port, () => {
+          pasvChannel.listen(port, function () {
             pasv = true;
-            resolve(pasvChannel.address());
+            resolve((this.address() as AddressInfo).port);
           });
         });
       });
     }
 
     function findAvailablePort() {
-      const { minDataPort, maxConnections } = _opt.cnf;
+      const { minDataPort, maxConnections } = config;
       return new Promise((resolve, reject) => {
         if (minDataPort > 0 && minDataPort < 65535) {
           function checkListenPort(port) {
@@ -903,7 +959,7 @@ export function ftpd(options: FTPdOptions) {
               if (isEncrypted === true && shouldProtect === true) {
                 socket = new tls.TLSSocket(socket, {
                   isServer: true,
-                  secureContext: tls.createSecureContext(_opt.tls),
+                  secureContext: tls.createSecureContext(config.tls),
                 });
                 socket.on("secure", () => {
                   DebugHandler(`${remoteInfo} data connection is secure`);
@@ -929,14 +985,11 @@ export function ftpd(options: FTPdOptions) {
 
   function ErrorHandler(err) {
     if (err.code !== "ECONNRESET") {
-      console.error(
-        "error",
-        `${getDateForLogs()} ${util.inspect(err, {
-          showHidden: false,
-          depth: null,
-          breakLength: "Infinity",
-        })}`
-      );
+      console.error( "error", `${getDateForLogs()} ${util.inspect(err, {
+        showHidden: false,
+        depth: null,
+        breakLength: Infinity,
+      })}` );
     }
   }
 
@@ -955,7 +1008,7 @@ export function ftpd(options: FTPdOptions) {
       `FTP server listening on ${util.inspect(address, {
         showHidden: false,
         depth: null,
-        breakLength: "Infinity",
+        breakLength: Infinity,
       })}`
     );
     emitter.emit("listen", {
@@ -983,14 +1036,14 @@ export function ftpd(options: FTPdOptions) {
 
   return Object.assign(emitter, {
     start() {
-      _tcp.listen(_opt.cnf.port);
-      _useTLS && _tls.listen(_opt.cnf.securePort);
+      tcpServer.listen(config.port);
+      usingTLS && tlsServer.listen(config.securePort);
     },
 
     stop() {
       Object.keys(openSessions).forEach((key) => openSessions[key].destroy());
-      _tcp.close();
-      _useTLS && _tls.close();
+      tcpServer.close();
+      usingTLS && tlsServer.close();
     },
 
     cleanup() {
@@ -1001,12 +1054,12 @@ export function ftpd(options: FTPdOptions) {
   });
 
   // the following methods should be defined by dependency injection (externalize user authentication scheme)
-  function validateLoginType(username) {
-    if (username === "anonymous" && _opt.cnf.allowAnonymousLogin) {
-      return LoginType.Anonymous;
-    } else if (_opt.cnf.user.length > 0) {
-      for (let i = 0; i < _opt.cnf.user.length; i++) {
-        const u = Object.assign({}, UserDefaults, _opt.cnf.user[i]);
+  function validateLoginType(username): [LoginType, UserOptions?] {
+    if (username === "anonymous" && config.allowAnonymousLogin) {
+      return [LoginType.Anonymous];
+    } else if (config.user.length > 0) {
+      for (let i = 0; i < config.user.length; i++) {
+        const u = Object.assign({}, UserDefaults, config.user[i]);
         if (typeof u === "object" && username === u.username) {
           if (
             Object.prototype.hasOwnProperty.call(
@@ -1022,9 +1075,9 @@ export function ftpd(options: FTPdOptions) {
           break;
         }
       }
-    } else if (username === _opt.cnf.username) {
-      if (_opt.cnf.allowLoginWithoutPassword === true) {
-        return [LoginType.NoPassword, _opt.cnf];
+    } else if (username === config.username) {
+      if (config.allowLoginWithoutPassword === true) {
+        return [LoginType.NoPassword, config];
       } else {
         return [LoginType.Password];
       }
@@ -1033,21 +1086,21 @@ export function ftpd(options: FTPdOptions) {
   }
 
   function authenticateUser(username, password) {
-    if (username === "anonymous" && _opt.cnf.allowAnonymousLogin) {
+    if (username === "anonymous" && config.allowAnonymousLogin) {
       return {
         username: password,
-        allowFileCreate: _opt.cnf.allowAnonymousFileCreate,
-        allowFileRetrieve: _opt.cnf.allowAnonymousFileRetrieve,
-        allowFileOverwrite: _opt.cnf.allowAnonymousFileOverwrite,
-        allowFileDelete: _opt.cnf.allowAnonymousFileDelete,
-        allowFileRename: _opt.cnf.allowAnonymousFileRename,
-        allowFolderDelete: _opt.cnf.allowAnonymousFolderDelete,
-        allowFolderCreate: _opt.cnf.allowAnonymousFolderCreate,
+        allowFileCreate: config.allowAnonymousFileCreate,
+        allowFileRetrieve: config.allowAnonymousFileRetrieve,
+        allowFileOverwrite: config.allowAnonymousFileOverwrite,
+        allowFileDelete: config.allowAnonymousFileDelete,
+        allowFileRename: config.allowAnonymousFileRename,
+        allowFolderDelete: config.allowAnonymousFolderDelete,
+        allowFolderCreate: config.allowAnonymousFolderCreate,
       };
     }
-    if (_opt.cnf.user.length > 0) {
-      for (let i = 0; i < _opt.cnf.user.length; i++) {
-        const u = Object.assign({}, UserDefaults, _opt.cnf.user[i]);
+    if (config.user.length > 0) {
+      for (let i = 0; i < config.user.length; i++) {
+        const u = Object.assign({}, UserDefaults, config.user[i]);
         if (
           typeof u === "object" &&
           username === u.username &&
@@ -1058,11 +1111,11 @@ export function ftpd(options: FTPdOptions) {
         }
       }
     } else if (
-      username === _opt.cnf.username &&
-      (_opt.cnf.allowLoginWithoutPassword === true || // this case was handled by validateLoginType
-        password === _opt.cnf.password)
+      username === config.username &&
+      (config.allowLoginWithoutPassword === true || // this case was handled by validateLoginType
+        password === config.password)
     ) {
-      return _opt.cnf;
+      return config;
     }
   }
 
@@ -1084,36 +1137,41 @@ export function ftpd(options: FTPdOptions) {
     [basefolder, folderPath]: [string, string],
     format
   ) {
-    const isMLSD = format === "MLSD";
-    if (_useHdl) {
-      return _opt.hdl.list(username, folderPath, isMLSD);
+    if (usingHandlers) {
+      return config.handler.list(username, folderPath, format);
     } else {
-      let listData = "";
       const read = fs.readdirSync(path.join(basefolder, folderPath));
+      const listData = Array(read.length);
+      const isMLSD = format === "MLSD";
       for (let i = 0; i < read.length; i++) {
-        const file = path.join(folderPath, read[i].trim());
-        const stat = fs.statSync(file);
+        const file = read[i].trim();
+        const stat = fs.statSync(path.join(basefolder, folderPath, file));
         if (isMLSD === true) {
-          listData += util.format(
-            "type=%s;modify=%s;%s %s\r\n",
-            stat.isDirectory() ? "dir" : "file",
-            getDateForMLSD(stat.mtime),
-            stat.isDirectory() ? "" : "size=" + stat.size.toString() + ";",
-            read[i].trim()
+          listData.push(
+            util.format(
+              "type=%s;modify=%s;%s %s",
+              stat.isDirectory() ? "dir" : "file",
+              getDateForMLSD(stat.mtime),
+              stat.isDirectory() ? "" : "size=" + stat.size.toString() + ";",
+              file
+            )
           );
         } else {
-          listData += util.format(
-            "%s 1 %s %s %s %s %s\r\n",
-            stat.isDirectory() ? "dr--r--r--" : "-r--r--r--", // ignoring other node types: sym-links, pipes, etc.
-            // skipping n-links
-            username, // uid
-            username, // gid
-            String(stat.isDirectory() ? "0" : stat.size).padStart(14, " "),
-            getDateForLIST(stat.mtime),
-            read[i].trim()
+          listData.push(
+            util.format(
+              "%s 1 %s %s %s %s %s",
+              stat.isDirectory() ? "dr--r--r--" : "-r--r--r--", // ignoring other node types: sym-links, pipes, etc.
+              // skipping n-links
+              username, // uid
+              username, // gid
+              String(stat.isDirectory() ? "0" : stat.size).padStart(14, " "),
+              getDateForLIST(stat.mtime),
+              file
+            )
           );
         }
       }
+      return listData;
     }
   }
 
@@ -1136,8 +1194,8 @@ export function ftpd(options: FTPdOptions) {
     restOffset: number,
     encoding?: BufferEncoding
   ): Promise<Buffer | fs.ReadStream> {
-    if (_useHdl) {
-      return _opt.hdl.download(username, folderPath, relativeFile, restOffset);
+    if (usingHandlers) {
+      return config.handler.download(username, folderPath, relativeFile, restOffset);
     } else {
       return Promise.resolve(
         fs.createReadStream(path.join(basefolder, folderPath, relativeFile), {
@@ -1160,12 +1218,12 @@ export function ftpd(options: FTPdOptions) {
     encoding?: BufferEncoding
   ) {
     return new Promise<void>((resolve, reject) => {
-      if (_useHdl) {
+      if (usingHandlers) {
         // hey, what about giving handler a ReadableStream?
         const data = [];
         socket.on("data", (d) => data.push(d));
         socket.on("close", () => {
-          _opt.hdl
+          config.handler
             .upload(
               username,
               folderPath,
@@ -1208,8 +1266,8 @@ export function ftpd(options: FTPdOptions) {
     renameFile: string,
     file: string
   ) {
-    if (_useHdl === true) {
-      return _opt.hdl.rename(
+    if (usingHandlers === true) {
+      return config.handler.rename(
         username,
         folderPath,
         renameFile.substring(basefolder.length),
@@ -1258,7 +1316,7 @@ function getDateForMLSD(mtime: Date): string {
   return `${now.getFullYear()}${MM}${DD}${H}${M}${S}`;
 }
 
-function getDateForMFMT(time: string): string {
+function getDateForMFMT(time: string): number {
   // expect format YYYYMMDDhhmmss
   const Y = time.substr(0, 4);
   const M = time.substr(4, 2);

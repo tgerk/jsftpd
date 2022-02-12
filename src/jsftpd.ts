@@ -18,7 +18,6 @@ import fs from "fs"
 import { EventEmitter } from "events"
 
 import Deferred from "./deferred"
-
 import localFsBackend from "./backends/local"
 
 export enum LoginType {
@@ -117,7 +116,7 @@ export type ConfigOptions = {
     auth?: AuthHandlers
   }
 
-const defaultBaseFolder = path.join(__dirname, "jsftpd-tmp")
+const defaultBaseFolder = path.join(process.cwd(), "jsftpd-tmp")
 const defaultCert = Buffer.from(
   "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFb3dJQkFBS0NBUUVBdHpOM1dKdHE5MjAzYWQ0eFRxb2hHM3hLUVdvUnJFejArd3JTUnNhZitMQTQzSWQ4CjRWUUU0elpsaEhSRVJzSGJjQkdGd0dNTEwxaGJXTWc3eDErSFhKYXlxNXJwcldTZ1g4TVRwZllkN2RUNkxRT3oKdmdBTUx3WUJwM3VkYm5IM2tyUERQazBibWRDcTZ4RmxqaUR4bHB6dWxIN1Vqb2crRE1XYmdpVHFYU2YrUThZTwpXS2xVRXhMVzZ5L3hFNUNIVVN3ZGI3MWREc2pDSG90YWliTTNXdlpGdEc3MnAvUXBaWldtZmQreEQwL3VoVnhNCnBualR0S21xWlMwcnJZM3Y1SFR5dVpBMUJRMFBVWmV0NzdLdWZKUis2aVlzQjQ4Z3NSM0szNmd6WHoyMzRXUXUKbEppcWk0dXo4Wjk1LzQyZmJOUlR3eWxRZXBQY1Ruc0Rib0Y0Q1FJREFRQUJBb0lCQVFDanR1UmlWSkVraDM5TApwbm9kdUQ5WjFwcHRGcUt3ZlIwMzhwV3pGZkVEUmtlcUc1SG5zek9pOEl1TDhITExZSlgrOGttNmdVZ1BpVUFvCmVOZWk5YVY3Z2xnc3JvVkFwSG9FMmNtSE9BZks3OWFadjRNeXVjd3BnWTZjNHdUdkcvMklKZ2pHZGhYQ1FRMWMKZi9Gbkw5MTFJTXk3K3hOc1JDaGZOWUFncjJpWTBZOUpRQndncTlJM1BWZ1RGQUtkTTBKZ1hySzhXVCtsN3NDRQpWc0kyUkVnYUxzeUxud2VmYnRwbVV0ankrbWtLemIzcnNyY1JVVmJOZjB3aEFlTG9HS01wZjVPNVUzMVNjd2xwClB2RnpHWkUyM01HbHpheGpZVVJTVmV3TFlzR2dwNTg5SDF6WmZaQVhSRWRiOEx2MGYra0I5MSthUi9Hdy9IT3gKS3ZlVXEvTVpBb0dCQU9BQkhxWWdXNmFwM3BjMjZJNVdNNURrMnJ1TnArRENQbzJUV3RRTklwTlREMEorRWt6SgpMZ1ZEK0xGVWZmNDFTQlZEbWZXR2x3cnVtajdWWGtTbjZyWmZXQUVKYTBySkljdHV3TDcxQ1Y0Q280cnFsUGlpCnhEazdhUFpYSXJBcjdaOG5UOG1kVStmcENMS1FNVUhYY0wydDI0cE85NytFVGVycVVYcGtEQXVEQW9HQkFORmUKVitZYThuVGxjVVhkbktqQVU4czJNSlhUUFZkeDlIM3BzQjNOVjJtR2lmM1h2d2F6ei9mYTg5NG5Ha3FxS2N6cwppV1BLdlR0MytVdUwxSlhWSlcwMllycHpUMlpMd2lqY3pCQlc1OGtIeU9UUGZ4UENjemh1dGlQUHJoMnQwbGJtCkR6WFpuTzJPUlpJWlp3MFllVFlNVzFUcnZ3WnRpT0VxMFp4cVVkeURBb0dBYld0K21pMmlOMll3NmZLVFpMdnMKMG5GSCsyZTF3bzkvMk01TEJ0d25zSWxaSWVUTmNaNndFVGhqcWRPWSsrencraG9jZ1pldC9sUVJHbkpGYXdvUApGK2k0NTBDL25UZGtmNmZwRlI1QzVoNHAzdmk1cmo1cjFYMFV4NGhHMUlHUXdEYUd2ZmhRL1M2UzVnNlRVUk00CjZoNmI2QktzNkd0cldEMy9jT2FnRDVzQ2dZQXpwNHdXS0dYVE0xeHIrVTRTVUVrY0pNVjk0WDBMMndDUUpCeWcKYmEzNFNnbzNoNGdJdGtwRUExQVJhaUpSYzRRV20vRVZuc3BySnFGcDR4alMwcUNHUGxuRFdIbXBhbDEveVdITApValdqWW5sTkFtaCt6b1d3MFplOFpCdTRGTStGUXdOVHJObkx2a01wMVh5WVBZYUNNREJFVmxsdDA0NW14ektwCjNZMU8wd0tCZ0FHaVkyNVZLOGJyMVFydXlzM3Vhb21LQ3BYUmhjZU15eHdBazdxeUlpNnpHeEx3bnFaVldaQmQKbkcxbkFaT2JET1JSTGRBRktPZ2tncGtVbGgrTEE3dTRuUytGWEdteGtLZlF1cTNTcTNaWHhiTjMxcXBCcERHTQoxbE9QSlVWY2UxV3ZyeXcrWVI4M1VFQ0ZTOEZjeDdibEVEM3oyNnVOQnN0dlBwVTUrV3ZxCi0tLS0tRU5EIFJTQSBQUklWQVRFIEtFWS0tLS0tCi0tLS0tQkVHSU4gQ0VSVElGSUNBVEUtLS0tLQpNSUlDNGpDQ0FjcWdBd0lCQWdJSWJqQ2hhajZDT2Iwd0RRWUpLb1pJaHZjTkFRRUxCUUF3RVRFUE1BMEdBMVVFCkF4TUdhbk5tZEhCa01DQVhEVEl3TURFd01UQXdNREF3TUZvWUR6azVPVGt4TWpNeE1qTTFPVFU1V2pBUk1ROHcKRFFZRFZRUURFd1pxYzJaMGNHUXdnZ0VpTUEwR0NTcUdTSWIzRFFFQkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDMwpNM2RZbTJyM2JUZHAzakZPcWlFYmZFcEJhaEdzVFBUN0N0Skd4cC80c0RqY2gzemhWQVRqTm1XRWRFUkd3ZHR3CkVZWEFZd3N2V0Z0WXlEdkhYNGRjbHJLcm11bXRaS0Jmd3hPbDloM3QxUG90QTdPK0FBd3ZCZ0duZTUxdWNmZVMKczhNK1RSdVowS3JyRVdXT0lQR1duTzZVZnRTT2lENE14WnVDSk9wZEovNUR4ZzVZcVZRVEV0YnJML0VUa0lkUgpMQjF2dlYwT3lNSWVpMXFKc3pkYTlrVzBidmFuOUNsbGxhWjkzN0VQVCs2RlhFeW1lTk8wcWFwbExTdXRqZS9rCmRQSzVrRFVGRFE5Umw2M3ZzcTU4bEg3cUppd0hqeUN4SGNyZnFETmZQYmZoWkM2VW1LcUxpN1B4bjNuL2paOXMKMUZQREtWQjZrOXhPZXdOdWdYZ0pBZ01CQUFHalBEQTZNQXdHQTFVZEV3RUIvd1FDTUFBd0hRWURWUjBPQkJZRQpGQkRRdzE4NC91Qk5zMHlxczVqaU92dnd4TFBTTUFzR0ExVWREd1FFQXdJRjREQU5CZ2txaGtpRzl3MEJBUXNGCkFBT0NBUUVBaWdSa0draEMxeTVMendOQ0N1T0I5eUsyS2NkUGJhcm9lZGlSWVVxZmpVU2JsT3NweWFTNjEvQjgKVk9UdHZSRjBxZkJFZTVxZVhVUTRIV1JGSnRVZmQ1eisvZTRZNkJHVmR3eFJ5aktIYkVGQ3NpOFlFZDNHOTdaZwpWM1RFV08xVVlCTlJhN2tZajE2QXFDOWtXaG5WRVU3bUdRWE5nR1NJaDNNTmx5RG1RblBIdHdzS2d3cUs5VWcvCk9QVUhUNGlTa2h2OEVoTjYyUFlRaHBEaU1udWFQbUZ1bGVKbmllQnNFMTlvSVBtbWsxblRIZXRPZDg4VU1PeUEKWDFKY0ZBZXI2dmVPQkxVMUhRSEdtd1Iyalgzai83YzI3SjJFdjRQWW1rU2R2N0FYcm5LaENDeGRSblA2WDlGaApTYlEwRHBhbW5zaWFEWld4QzNuUks2LzVndXdlOHc9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
   "base64"
@@ -194,7 +193,7 @@ export function createFtpServer({
 
   // setup FTP on TCP
   const tcpServer = createServer()
-  tcpServer.on("error", ErrorHandler)
+  tcpServer.on("error", ServerErrorHandler)
   tcpServer.on("listening", () => {
     ListenHandler("tcp", tcpServer.address())
   })
@@ -205,7 +204,7 @@ export function createFtpServer({
   let tlsServer: tls.Server
   if (usingTLS) {
     tlsServer = createSecureServer(config.tls)
-    tlsServer.on("error", ErrorHandler)
+    tlsServer.on("error", ServerErrorHandler)
     tlsServer.on("listening", function () {
       ListenHandler("tls", tlsServer.address())
     })
@@ -289,7 +288,7 @@ export function createFtpServer({
     let renameFile = ""
     let restOffset = 0
 
-    cmdSocket.on("error", ErrorHandler)
+    cmdSocket.on("error", SessionErrorHandler)
     cmdSocket.on("data", CmdHandler)
     cmdSocket.on("close", () => {
       openSessions.delete(socketKey)
@@ -307,7 +306,6 @@ export function createFtpServer({
       interface FTPCommandTable {
         [fn: string]: (cmd: string, arg: string) => void
       }
-
       const preAuthMethods: FTPCommandTable = { USER, PASS, AUTH }
       const authenticatedMethods: FTPCommandTable = {
         QUIT,
@@ -626,8 +624,8 @@ export function createFtpServer({
       /*
        *  CWD
        */
-      function CWD(cmd: string, param: string) {
-        resolveFolder(param).then(
+      function CWD(cmd: string, folder: string) {
+        resolveFolder(folder).then(
           (folder) =>
             folderExists(folder).then((isFolder) => {
               if (isFolder) {
@@ -648,7 +646,7 @@ export function createFtpServer({
             }),
           (error) => {
             DebugHandler(error)
-            client.respond("550", `Command failed "${param}`)
+            client.respond("550", `Command failed "${folder}`)
           }
         )
       }
@@ -657,8 +655,8 @@ export function createFtpServer({
        *  RMD
        *  RMDA
        */
-      function RMD(cmd: string, param: string) {
-        resolveFolder(param).then(
+      function RMD(cmd: string, folder: string) {
+        resolveFolder(folder).then(
           (folder) => {
             if (!allowUserFolderDelete || folder === "/") {
               client.respond("550", "Permission denied")
@@ -682,7 +680,7 @@ export function createFtpServer({
           },
           (error) => {
             DebugHandler(error)
-            client.respond("550", `Command failed "${param}`)
+            client.respond("550", `Command failed "${folder}`)
           }
         )
       }
@@ -690,11 +688,11 @@ export function createFtpServer({
       /*
        *  MKD
        */
-      function MKD(cmd: string, param: string) {
+      function MKD(cmd: string, folder: string) {
         if (!allowUserFolderCreate) {
           client.respond("550", "Permission denied")
         } else {
-          resolveFolder(param).then(
+          resolveFolder(folder).then(
             (folder) =>
               folderExists(folder).then((isFolder) => {
                 if (isFolder) {
@@ -713,7 +711,7 @@ export function createFtpServer({
               }),
             (error) => {
               DebugHandler(error)
-              client.respond("550", `Command failed "${param}`)
+              client.respond("550", `Command failed "${folder}`)
             }
           )
         }
@@ -732,7 +730,7 @@ export function createFtpServer({
                 DebugHandler(
                   `${remoteInfo} LIST response on data channel\r\n${listing}`
                 )
-                socket.end(Buffer.from(listing || "\r\n"))
+                socket.end(Buffer.from(listing + "\r\n"))
                 client.respond(
                   "226",
                   `Successfully transferred "${getFolder()}"`
@@ -826,7 +824,7 @@ export function createFtpServer({
                           asciiOn && writeSocket.setEncoding("ascii")
                           readStream.on("error", (error) => {
                             // incomplete write
-                            DebugHandler(error.message)
+                            DebugHandler(error)
                             writeSocket.destroy()
                             client.respond("550", `Transfer failed "${file}"`)
                           })
@@ -886,13 +884,13 @@ export function createFtpServer({
                       .then((writeStream) => {
                         writeStream.on("error", (error) => {
                           // incomplete write
-                          DebugHandler(error.message)
+                          DebugHandler(error)
                           readSocket.destroy()
                           client.respond("550", `Transfer failed "${file}"`)
                         })
                         readSocket.on("error", (error) => {
                           // incomplete upload
-                          DebugHandler(error.message)
+                          DebugHandler(error)
                           writeStream.destroy()
                           client.respond("550", `Transfer failed "${file}"`)
                         })
@@ -1067,15 +1065,25 @@ export function createFtpServer({
         pasvChannel.close()
         pasvSocket = new Deferred<Socket | TLSSocket>()
       }
+
+      function setupSocket(socket: Socket|TLSSocket) {
+        socket.on("error", SessionErrorHandler)
+        socket.on("close", () => {
+          pasvSocket = new Deferred<Socket | TLSSocket>()
+        })
+        // socket.on("data", (buf) => DebugHandler(buf.toString()))
+        pasvSocket.resolve(socket)
+      }
+
       if (isEncrypted && shouldProtect) {
         pasvChannel = createSecureServer(config.tls)
         pasvChannel.on("secureConnection", (socket) => {
           DebugHandler(`${remoteInfo} secure data connection established`)
-          pasvSocket.resolve(socket)
+          setupSocket(socket)
         })
       } else {
         pasvChannel = createServer()
-        pasvChannel.on("error", DebugHandler)
+        pasvChannel.on("error", ServerErrorHandler)
         pasvChannel.on("connection", (socket) => {
           if (isEncrypted && shouldProtect) {
             socket = new TLSSocket(socket, {
@@ -1084,16 +1092,12 @@ export function createFtpServer({
             })
             socket.on("secure", () => {
               DebugHandler(`${remoteInfo} data connection is secured`)
-              pasvSocket.resolve(socket)
+              setupSocket(socket)
             })
           } else {
             DebugHandler(`${remoteInfo} data connection established`)
-            pasvSocket.resolve(socket)
+            setupSocket(socket)
           }
-          socket.on("close", () => {
-            pasvSocket = new Deferred<Socket | TLSSocket>()
-          })
-          // socket.on("data", (buf) => DebugHandler(buf.toString()))
         })
       }
       pasvChannel.maxConnections = 1
@@ -1182,8 +1186,9 @@ export function createFtpServer({
       })
     }
 
-    function ErrorHandler(err: NodeJS.ErrnoException) {
+    function SessionErrorHandler(err: NodeJS.ErrnoException) {
       if ("code" in err && err.code === "ECONNRESET") {
+        DebugHandler(err)
         return
       }
       console.error(
@@ -1311,16 +1316,17 @@ export function createFtpServer({
     })
   }
 
-  function LogHandler(msg: string) {
+  function LogHandler(msg: string|{ toString: () => string}) {
     emitter.emit("log", `${getDateForLogs()} ${msg}`)
   }
 
-  function DebugHandler(msg: string) {
+  function DebugHandler(msg: string|{ toString: () => string}) {
     emitter.emit("debug", `${getDateForLogs()} ${msg}`)
   }
 
-  function ErrorHandler(err: NodeJS.ErrnoException) {
+  function ServerErrorHandler(err: NodeJS.ErrnoException) {
     if ("code" in err && err.code === "ECONNRESET") {
+      DebugHandler(err)
       return
     }
     console.error(

@@ -11,6 +11,8 @@ export default function ({
   basefolder: string
   username?: string
 }) {
+  baseFolder = path.join(baseFolder)
+
   function resolveFolder(folder: string): Promise<string> {
     folder =
       folder.charAt(0) === "/"
@@ -62,15 +64,9 @@ export default function ({
   }
 
   function folderDelete(folder: string) {
-    return folderExists(folder).then((isFolder) => {
-      if (!isFolder)
-        throw Object.assign(Error("holy jeepers, Batman!"), {
-          code: "ENOTDIR",
-        })
-      return fs.rm(path.join(baseFolder, folder), {
-        force: true,
-        recursive: true,
-      })
+    return fs.rm(path.join(baseFolder, folder), {
+      force: true,
+      recursive: true,
     })
   }
 

@@ -107,5 +107,5 @@ dist
 tmp/
 
 # typescript output
-lib/
+/lib
 

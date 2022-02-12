@@ -1,5 +1,5 @@
 import util from "util"
-import path, { resolve } from "path"
+import path from "path"
 import fs from "fs/promises"
 
 import { FolderListFormat, getDateForLIST, getDateForMLSD } from "../jsftpd"
@@ -16,7 +16,7 @@ export default function ({
       folder.charAt(0) === "/"
         ? path.join(baseFolder, folder)
         : path.join(baseFolder, currentFolder, folder)
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       if (folder.startsWith(baseFolder)) {
         resolve("/" + path.relative(baseFolder, folder))
       }

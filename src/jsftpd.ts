@@ -192,7 +192,6 @@ export function createFtpServer({
     }
   }
 
-  const fudge: TlsOptions = {}
   // setup FTP on TCP
   const tcpServer = createServer()
   tcpServer.on("error", ErrorHandler)
@@ -397,7 +396,7 @@ export function createFtpServer({
         switch (loginType) {
           case LoginType.Anonymous:
             username = `anon(${password})`
-          case LoginType.NoPassword:
+          case LoginType.NoPassword: // eslint-disable-line no-fallthrough
           case LoginType.Password:
             DebugHandler(`${remoteInfo} username[${username}] authenticated`)
             setUserRights(userRights).then(() => {
@@ -439,13 +438,6 @@ export function createFtpServer({
         client.respond("221", "Goodbye")
         cmdSocket.end()
         authenticated && LogoffHandler()
-      }
-
-      /*
-       *  PWD
-       */
-      function PWD() {
-        client.respond("257", `"${getFolder()}" is current directory`)
       }
 
       /*
@@ -625,23 +617,37 @@ export function createFtpServer({
       }
 
       /*
+       *  PWD
+       */
+      function PWD() {
+        client.respond("257", `"${getFolder()}" is current directory`)
+      }
+
+      /*
        *  CWD
        */
       function CWD(cmd: string, param: string) {
         resolveFolder(param).then(
           (folder) =>
-            setFolder(folder).then(
-              (folder) =>
-                client.respond(
-                  "250",
-                  `CWD successful. "${folder}" is current directory`
-                ),
-              (error) => {
-                DebugHandler(error)
-                client.respond("530", "CWD not successful")
+            folderExists(folder).then((isFolder) => {
+              if (isFolder) {
+                setFolder(folder).then(
+                  (folder) =>
+                    client.respond(
+                      "250",
+                      `CWD successful. "${folder}" is current directory`
+                    ),
+                  (error) => {
+                    DebugHandler(error)
+                    client.respond("530", "CWD not successful")
+                  }
+                )
+              } else {
+                client.respond("550", "Folder not found")
               }
-            ),
+            }),
           (error) => {
+            DebugHandler(error)
             client.respond("550", `Command failed "${param}`)
           }
         )
@@ -657,25 +663,25 @@ export function createFtpServer({
             if (!allowUserFolderDelete || folder === "/") {
               client.respond("550", "Permission denied")
             } else {
-              folderDelete(folder).then(
-                () => {
-                  client.respond("250", "Folder deleted successfully")
-                },
-                (error) => {
-                  DebugHandler(error)
-                  switch (error.code) {
-                    case "ENOTDIR":
-                      client.respond("550", "Folder not found")
-                      break
-                    default:
+              folderExists(folder).then((isFolder) => {
+                if (isFolder) {
+                  folderDelete(folder).then(
+                    () => {
+                      client.respond("250", "Folder deleted successfully")
+                    },
+                    (error) => {
+                      DebugHandler(error)
                       client.respond("501", "Command failed")
-                      break
-                  }
+                    }
+                  )
+                } else {
+                  client.respond("550", "Folder not found")
                 }
-              )
+              })
             }
           },
           (error) => {
+            DebugHandler(error)
             client.respond("550", `Command failed "${param}`)
           }
         )
@@ -690,22 +696,23 @@ export function createFtpServer({
         } else {
           resolveFolder(param).then(
             (folder) =>
-              folderCreate(folder).then(
-                () => {
-                  client.respond("250", "Folder created successfully")
-                },
-                (error) => {
-                  switch (error.code) {
-                    case "EEXIST":
-                      client.respond("550", "Folder exists")
-                      break
-                    default:
+              folderExists(folder).then((isFolder) => {
+                if (isFolder) {
+                  client.respond("550", "Folder exists")
+                } else {
+                  folderCreate(folder).then(
+                    () => {
+                      client.respond("250", "Folder created successfully")
+                    },
+                    (error) => {
+                      DebugHandler(error)
                       client.respond("501", "Command failed")
-                      break
-                  }
+                    }
+                  )
                 }
-              ),
+              }),
             (error) => {
+              DebugHandler(error)
               client.respond("550", `Command failed "${param}`)
             }
           )
@@ -760,6 +767,7 @@ export function createFtpServer({
               }
             ),
           (error) => {
+            DebugHandler(error)
             client.respond("501", "Command failed")
           }
         )
@@ -791,6 +799,7 @@ export function createFtpServer({
                 }
               ),
             (error) => {
+              DebugHandler(error)
               client.respond("501", "Command failed")
             }
           )
@@ -852,6 +861,7 @@ export function createFtpServer({
             }
           },
           (error) => {
+            DebugHandler(error)
             client.respond("550", `Transfer failed "${param}`)
           }
         )
@@ -907,6 +917,7 @@ export function createFtpServer({
               }
             }),
           (error) => {
+            DebugHandler(error)
             client.respond("550", `Transfer failed "${param}"`)
           }
         )
@@ -930,6 +941,7 @@ export function createFtpServer({
                 }
               }),
             (error) => {
+              DebugHandler(error)
               client.respond("501", "Command failed")
             }
           )
@@ -965,6 +977,7 @@ export function createFtpServer({
                 }
               }),
             (error) => {
+              DebugHandler(error)
               client.respond("501", "Command failed")
             }
           )
@@ -996,6 +1009,7 @@ export function createFtpServer({
               }
             ),
           (error) => {
+            DebugHandler(error)
             client.respond("501", "Command failed")
           }
         )

@@ -9,8 +9,9 @@
         "@typescript-eslint"
     ],
     "extends": [
-        "recommended",
-        "plugin:@typescript-eslint/recommended"
+        "eslint:recommended", 
+        "plugin:@typescript-eslint/recommended",
+        "prettier"
     ],
     "parserOptions": {
         "ecmaVersion": 12

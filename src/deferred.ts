@@ -1,4 +1,9 @@
-export default class Deferred<T> {
+interface IDeferred<T> extends Promise<T> {
+  resolve(val: T): undefined
+  reject(error: Error): undefined
+}
+
+export default class Deferred<T> implements IDeferred<T> {
   p: Promise<T>
 
   constructor() {
@@ -6,9 +11,18 @@ export default class Deferred<T> {
       Object.assign(this, { resolve, reject })
     })
   }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  resolve(val: T): undefined {
+    throw new Error("Method not implemented.")
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  reject(error: Error): undefined {
+    throw new Error("Method not implemented.")
+  }
 
-  resolve(socket: T) {}
-  reject(error: any) {}
+  get [Symbol.toStringTag]() {
+    return this.p[Symbol.toStringTag]
+  }
 
   get then() {
     return this.p.then.bind(this.p)

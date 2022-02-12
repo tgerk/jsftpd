@@ -618,7 +618,7 @@ test("test CWD message", async () => {
 
   await promiseSocket.write("CWD false")
   content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("530 CWD not successful")
+  expect(content.toString().trim()).toBe("550 Folder not found")
 
   await promiseSocket.end()
 })

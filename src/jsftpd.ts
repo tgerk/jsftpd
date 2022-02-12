@@ -1066,7 +1066,7 @@ export function createFtpServer({
         pasvSocket = new Deferred<Socket | TLSSocket>()
       }
 
-      function setupSocket(socket: Socket|TLSSocket) {
+      function setupSocket(socket: Socket | TLSSocket) {
         socket.on("error", SessionErrorHandler)
         socket.on("close", () => {
           pasvSocket = new Deferred<Socket | TLSSocket>()
@@ -1316,11 +1316,11 @@ export function createFtpServer({
     })
   }
 
-  function LogHandler(msg: string|{ toString: () => string}) {
+  function LogHandler(msg: string | { toString: () => string }) {
     emitter.emit("log", `${getDateForLogs()} ${msg}`)
   }
 
-  function DebugHandler(msg: string|{ toString: () => string}) {
+  function DebugHandler(msg: string | { toString: () => string }) {
     emitter.emit("debug", `${getDateForLogs()} ${msg}`)
   }
 

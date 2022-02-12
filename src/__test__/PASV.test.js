@@ -1,4 +1,4 @@
-const { ftpd } = require("../index")
+const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
 const { PromiseSocket, TimeoutError } = require("promise-socket")
@@ -10,6 +10,7 @@ let server,
   dataContent = null
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
+const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
@@ -36,13 +37,12 @@ test("test PASV message takes next free port", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 1,
   }
-  server = new ftpd({ cnf: config })
-  expect(server).toBeInstanceOf(ftpd)
+  server = createServer({ cnf: config })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -59,7 +59,7 @@ test("test PASV message takes next free port", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(cmdPortTCP + 1, "localhost")
+  await dataSocket.connect(cmdPortTCP + 1, localhost)
 
   await promiseSocket.write("LIST")
   content = await promiseSocket.read()
@@ -90,13 +90,12 @@ test("test PASV message fails port unavailable", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 0,
   }
-  server = new ftpd({ cnf: config })
-  expect(server).toBeInstanceOf(ftpd)
+  server = createServer({ cnf: config })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -124,13 +123,12 @@ test("test PASV message fails port range fails", async () => {
     minDataPort: 70000,
     maxConnections: 0,
   }
-  server = new ftpd({ cnf: config })
-  expect(server).toBeInstanceOf(ftpd)
+  server = createServer({ cnf: config })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -158,13 +156,12 @@ test("test EPSV message takes next free port", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 1,
   }
-  server = new ftpd({ cnf: config })
-  expect(server).toBeInstanceOf(ftpd)
+  server = createServer({ cnf: config })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -180,7 +177,7 @@ test("test EPSV message takes next free port", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(cmdPortTCP + 1, "localhost")
+  await dataSocket.connect(cmdPortTCP + 1, localhost)
 
   await promiseSocket.write("LIST")
   content = await promiseSocket.read()
@@ -211,13 +208,12 @@ test("test EPSV message fails port unavailable", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 0,
   }
-  server = new ftpd({ cnf: config })
-  expect(server).toBeInstanceOf(ftpd)
+  server = createServer({ cnf: config })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 

@@ -26,9 +26,7 @@ module.exports = {
   coverageDirectory: "coverage",
 
   // An array of regexp pattern strings used to skip coverage collection
-  coveragePathIgnorePatterns: [
-    "/node_modules/"
-  ],
+  coveragePathIgnorePatterns: ["/node_modules/"],
 
   // Indicates which provider should be used to instrument code for coverage
   coverageProvider: "v8",
@@ -155,9 +153,13 @@ module.exports = {
   // testPathIgnorePatterns: [
   //   "/node_modules/"
   // ],
+  testPathIgnorePatterns: [
+    "/node_modules/", "/lib/"
+  ],
 
   // The regexp pattern or array of patterns that Jest uses to detect test files
   // testRegex: [],
+  testRegex: "(/__tests__/.*|(\\.|/)(test|spec))\\.(jsx?|tsx?)$",
 
   // This option allows the use of a custom results processor
   // testResultsProcessor: undefined,
@@ -173,6 +175,9 @@ module.exports = {
 
   // A map from regular expressions to paths to transformers
   // transform: undefined,
+  transform: {
+    "^.+\\.tsx?$": "ts-jest",
+  },
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation
   // transformIgnorePatterns: [
@@ -191,4 +196,4 @@ module.exports = {
 
   // Whether to use watchman for file crawling
   // watchman: true,
-};
+}

@@ -1,4 +1,4 @@
-const { ftpd } = require("../index")
+const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
 const { PromiseSocket, TimeoutError } = require("promise-socket")
@@ -10,6 +10,7 @@ let server,
   dataContent = null
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
+const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
@@ -30,15 +31,14 @@ test("test RNFR message file does not exist", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = new ftpd({
+  server = createServer({
     cnf: { port: 50021, user: users, minDataPort: dataPort },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(50021, "localhost")
+  await socket.connect(50021, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -54,7 +54,7 @@ test("test RNFR message file does not exist", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("STOR mytestfile")
   content = await promiseSocket.read()
@@ -83,15 +83,14 @@ test("test RNFR/RNTO message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = new ftpd({
+  server = createServer({
     cnf: { port: 50021, user: users, minDataPort: dataPort },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(50021, "localhost")
+  await socket.connect(50021, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -107,7 +106,7 @@ test("test RNFR/RNTO message", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("STOR mytestfile")
   content = await promiseSocket.read()
@@ -138,7 +137,7 @@ test("test RNFR/RNTO message", async () => {
 
   promiseDataSocket = new PromiseSocket(new net.Socket())
   dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("MLSD")
 
@@ -164,14 +163,23 @@ test("test RNFR/RNTO message using handlers", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  const rn = jest.fn().mockImplementationOnce(() => Promise.resolve(true))
-  server = new ftpd({ cnf: { port: 50021, user: users }, hdl: { rename: rn } })
-  expect(server).toBeInstanceOf(ftpd)
+  const fileRename = jest
+    .fn()
+    .mockImplementationOnce(() => Promise.resolve(true))
+  server = createServer({
+    cnf: { port: 50021, user: users },
+    hdl: {
+      fileExists(file) {
+        return Promise.resolve(file === "mytestfile")
+      },
+      fileRename,
+    },
+  })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(50021, "localhost")
+  await socket.connect(50021, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -187,8 +195,8 @@ test("test RNFR/RNTO message using handlers", async () => {
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("250 File renamed successfully")
 
-  expect(rn).toBeCalledTimes(1)
-  expect(rn).toHaveBeenCalledWith("john", "/", "mytestfile", "someotherfile")
+  expect(fileRename).toBeCalledTimes(1)
+  expect(fileRename).toHaveBeenCalledWith("mytestfile", "someotherfile")
 
   await promiseSocket.end()
 })
@@ -200,14 +208,23 @@ test("test RNFR/RNTO message using handlers failing", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  const rn = jest.fn().mockImplementationOnce(() => Promise.resolve(false))
-  server = new ftpd({ cnf: { port: 50021, user: users }, hdl: { rename: rn } })
-  expect(server).toBeInstanceOf(ftpd)
+  const fileRename = jest
+    .fn()
+    .mockImplementationOnce(() => Promise.reject(Error("mock")))
+  server = createServer({
+    cnf: { port: 50021, user: users },
+    hdl: {
+      fileExists(file) {
+        return Promise.resolve(file === "mytestfile")
+      },
+      fileRename,
+    },
+  })
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(50021, "localhost")
+  await socket.connect(50021, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -223,8 +240,8 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("550 File rename failed")
 
-  expect(rn).toBeCalledTimes(1)
-  expect(rn).toHaveBeenCalledWith("john", "/", "mytestfile", "someotherfile")
+  expect(fileRename).toBeCalledTimes(1)
+  expect(fileRename).toHaveBeenCalledWith("mytestfile", "someotherfile")
 
   await promiseSocket.end()
 })
@@ -236,15 +253,14 @@ test("test RNFR/RNTO message file already exists", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = new ftpd({
+  server = createServer({
     cnf: { port: 50021, user: users, minDataPort: dataPort },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(50021, "localhost")
+  await socket.connect(50021, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -260,7 +276,7 @@ test("test RNFR/RNTO message file already exists", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("STOR mytestfile")
   content = await promiseSocket.read()
@@ -275,11 +291,28 @@ test("test RNFR/RNTO message file already exists", async () => {
     '226 Successfully transferred "mytestfile"'
   )
 
+  promiseDataSocket = new PromiseSocket(new net.Socket())
+  dataSocket = promiseDataSocket.stream
+  await dataSocket.connect(dataPort, localhost)
+
+  await promiseSocket.write("STOR mytestfile2")
+  content = await promiseSocket.read()
+  expect(content.toString().trim()).toBe("150 Opening data channel")
+
+  await promiseDataSocket.write("OTHERTESTCONTENT")
+  dataSocket.end()
+  await promiseDataSocket.end()
+
+  content = await promiseSocket.read()
+  expect(content.toString().trim()).toBe(
+    '226 Successfully transferred "mytestfile2"'
+  )
+
   await promiseSocket.write("RNFR /mytestfile")
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("350 File exists")
 
-  await promiseSocket.write("RNTO mytestfile")
+  await promiseSocket.write("RNTO mytestfile2")
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("550 File already exists")
 

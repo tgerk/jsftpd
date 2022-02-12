@@ -105,3 +105,7 @@ dist
 
 # tmp folder created from jsftpd
 tmp/
+
+# typescript output
+lib/
+

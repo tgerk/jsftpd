@@ -1,4 +1,4 @@
-const { ftpd } = require("../index")
+const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
 const { PromiseSocket, TimeoutError } = require("promise-socket")
@@ -10,6 +10,7 @@ let server,
   dataContent = null
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
+const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
@@ -31,15 +32,14 @@ test("test LIST message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = new ftpd({
+  server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -60,7 +60,7 @@ test("test LIST message", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("LIST")
 
@@ -86,15 +86,14 @@ test("test MLSD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = new ftpd({
+  server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -114,7 +113,7 @@ test("test MLSD message", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("MLSD")
 
@@ -139,15 +138,14 @@ test("test MLSD message over secure connection", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = new ftpd({
+  server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -183,7 +181,7 @@ test("test MLSD message over secure connection", async () => {
   )
 
   let promiseDataSocket = new PromiseSocket(
-    new tls.connect(dataPort, "localhost", { rejectUnauthorized: false })
+    new tls.connect(dataPort, localhost, { rejectUnauthorized: false })
   )
   let dataSocket = promiseDataSocket.stream
   await dataSocket.once("secureConnect", function () {})
@@ -212,19 +210,16 @@ test("test MLSD message with handler", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  const ls = jest
-    .fn()
-    .mockImplementationOnce(() => Promise.resolve(Buffer.from("")))
-  server = new ftpd({
+  const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
+  server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: { list: ls },
+    hdl: { folderList },
   })
-  expect(server).toBeInstanceOf(ftpd)
   server.start()
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, "localhost")
+  await socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -240,7 +235,7 @@ test("test MLSD message with handler", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, "localhost")
+  await dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("MLSD")
 

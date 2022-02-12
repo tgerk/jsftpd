@@ -81,8 +81,17 @@ export type UserPermissions = {
   allowUserFolderCreate?: boolean
 }
 
+export const allUserPermissions = [
+  "allowUserFolderCreate",
+  "allowUserFolderDelete",
+  "allowUserFileCreate",
+  "allowUserFileRetrieve",
+  "allowUserFileOverwrite",
+  "allowUserFileRename",
+  "allowUserFileDelete",
+]
+
 export type UserCredential = {
-  password?: string
   basefolder?: string
   allowLoginWithoutPassword?: boolean
 } & UserPermissions
@@ -94,12 +103,13 @@ export type ConfigOptions = {
   minDataPort?: number
 
   allowAnonymousLogin?: boolean
-
-  username?: string
-
   user?: ({
     username: string
+    password?: string
   } & UserCredential)[]
+
+  username?: string
+  password?: string
 } & UserCredential &
   AnonymousPermissions & {
     tls?: TlsOptions
@@ -187,7 +197,7 @@ export function createFtpServer({
   const tcpServer = createServer()
   tcpServer.on("error", ErrorHandler)
   tcpServer.on("listening", () => {
-    emitListen("tcp", tcpServer.address() as AddressInfo)
+    ListenHandler("tcp", tcpServer.address())
   })
   tcpServer.on("connection", SessionHandler)
   tcpServer.maxConnections = config.maxConnections
@@ -198,7 +208,7 @@ export function createFtpServer({
     tlsServer = createSecureServer(config.tls)
     tlsServer.on("error", ErrorHandler)
     tlsServer.on("listening", function () {
-      emitListen("tls", tlsServer.address() as AddressInfo)
+      ListenHandler("tls", tlsServer.address())
     })
     tlsServer.on("secureConnection", SessionHandler)
     tlsServer.maxConnections = config.maxConnections
@@ -842,7 +852,6 @@ export function createFtpServer({
             }
           },
           (error) => {
-            // arg
             client.respond("550", `Transfer failed "${param}`)
           }
         )
@@ -863,34 +872,33 @@ export function createFtpServer({
               } else {
                 openDataSocket()
                   .then((readSocket) => {
-                    fileStore(
-                      file,
-                      restOffset,
-                      asciiOn ? "ascii" : "binary"
-                    ).then((writeStream) => {
-                      writeStream.on("error", (error) => {
-                        // incomplete write
-                        DebugHandler(error.message)
-                        readSocket.destroy()
-                        client.respond("550", `Transfer failed "${file}"`)
+                    fileStore(file, restOffset, asciiOn ? "ascii" : "binary")
+                      .then((writeStream) => {
+                        writeStream.on("error", (error) => {
+                          // incomplete write
+                          DebugHandler(error.message)
+                          readSocket.destroy()
+                          client.respond("550", `Transfer failed "${file}"`)
+                        })
+                        readSocket.on("error", (error) => {
+                          // incomplete upload
+                          DebugHandler(error.message)
+                          writeStream.destroy()
+                          client.respond("550", `Transfer failed "${file}"`)
+                        })
+                        readSocket.on("end", () => {
+                          // end of file
+                          writeStream.end()
+                          client.respond(
+                            "226",
+                            `Successfully transferred "${file}"`
+                          )
+                        })
+                        readSocket.pipe(writeStream)
                       })
-                      readSocket.on("error", (error) => {
-                        // incomplete upload
-                        DebugHandler(error.message)
-                        writeStream.destroy()
-                        client.respond("550", `Transfer failed "${file}"`)
+                      .finally(() => {
+                        restOffset = 0
                       })
-                      readSocket.on("end", () => {
-                        // end of file
-                        writeStream.end()
-                        client.respond(
-                          "226",
-                          `Successfully transferred "${file}"`
-                        )
-                      })
-                      readSocket.pipe(writeStream)
-                    })
-                    .finally(() => { restOffset = 0 })
                   })
                   .catch((error) => {
                     DebugHandler(error)
@@ -1175,8 +1183,7 @@ export function createFtpServer({
     }
   }
 
-  // the following methods may be overridden by dependency injection
-  //  not externalized due to close dependence on config options
+  // the following methods may be overridden by dependency injection, not externalized due to close dependence on config options
   const { validateLoginType, authenticateUser } = authHandlers ?? {
     validateLoginType(username: string): [LoginType, UserCredential?] {
       if (username === "anonymous") {
@@ -1187,7 +1194,15 @@ export function createFtpServer({
         const user = config.user.find((u) => username === u.username)
         if (user) {
           if (user.allowLoginWithoutPassword) {
-            return [LoginType.NoPassword, user]
+            return [
+              LoginType.NoPassword,
+              allUserPermissions.reduce((o: UserPermissions, k) => {
+                o[k as keyof UserPermissions] =
+                  user[k as keyof UserPermissions] ??
+                  UserDefaults[k as keyof UserPermissions]
+                return o
+              }, {}),
+            ]
           } else {
             return [LoginType.Password]
           }
@@ -1196,15 +1211,12 @@ export function createFtpServer({
         if (config.allowLoginWithoutPassword === true) {
           return [
             LoginType.NoPassword,
-            {
-              allowUserFileCreate: config.allowUserFileCreate,
-              allowUserFileRetrieve: config.allowUserFileRetrieve,
-              allowUserFileOverwrite: config.allowUserFileOverwrite,
-              allowUserFileDelete: config.allowUserFileDelete,
-              allowUserFileRename: config.allowUserFileRename,
-              allowUserFolderDelete: config.allowUserFolderDelete,
-              allowUserFolderCreate: config.allowUserFolderCreate,
-            },
+            allUserPermissions.reduce((o: UserPermissions, k) => {
+              o[k as keyof UserPermissions] =
+                config[k as keyof UserPermissions] ??
+                UserDefaults[k as keyof UserPermissions]
+              return o
+            }, {}),
           ]
         } else {
           return [LoginType.Password]
@@ -1221,15 +1233,7 @@ export function createFtpServer({
         if (config.allowAnonymousLogin) {
           return [
             LoginType.Anonymous,
-            [
-              "allowUserFileCreate",
-              "allowUserFileRetrieve",
-              "allowUserFileOverwrite",
-              "allowUserFileDelete",
-              "allowUserFileRename",
-              "allowUserFolderDelete",
-              "allowUserFolderCreate",
-            ].reduce((o: UserPermissions, k) => {
+            allUserPermissions.reduce((o: UserPermissions, k) => {
               const ak = k.replace("allowUser", "allowAnonymous")
               o[k as keyof UserPermissions] =
                 config[ak as keyof AnonymousPermissions] ??
@@ -1248,7 +1252,12 @@ export function createFtpServer({
             user.allowLoginWithoutPassword
               ? LoginType.NoPassword
               : LoginType.Password,
-            user,
+            allUserPermissions.reduce((o: UserPermissions, k) => {
+              o[k as keyof UserPermissions] =
+                user[k as keyof UserPermissions] ??
+                UserDefaults[k as keyof UserPermissions]
+              return o
+            }, {}),
           ]
         }
       } else if (
@@ -1259,7 +1268,12 @@ export function createFtpServer({
           config.allowLoginWithoutPassword
             ? LoginType.NoPassword
             : LoginType.Password,
-          config,
+          allUserPermissions.reduce((o: UserPermissions, k) => {
+            o[k as keyof UserPermissions] =
+              config[k as keyof UserPermissions] ??
+              UserDefaults[k as keyof UserPermissions]
+            return o
+          }, {}),
         ]
       }
       return [LoginType.None]
@@ -1268,7 +1282,7 @@ export function createFtpServer({
 
   const emitter = new EventEmitter()
 
-  function emitListen(protocol: string, address: AddressInfo) {
+  function ListenHandler(protocol: string, address: string | AddressInfo) {
     DebugHandler(
       `FTP server listening on ${util.inspect(address, {
         showHidden: false,
@@ -1278,8 +1292,8 @@ export function createFtpServer({
     )
     emitter.emit("listen", {
       protocol,
-      address: address.address.replace(/::ffff:/g, ""),
-      port: address.port,
+      address: (address as AddressInfo).address.replace(/::ffff:/g, ""),
+      port: (address as AddressInfo).port,
     })
   }
 

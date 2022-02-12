@@ -88,6 +88,7 @@ export default function ({
     return fs
       .readdir(path.join(baseFolder, currentFolder), { withFileTypes: true })
       .then((dirents) =>
+        // skip other node types: sym-links, pipes, etc.
         dirents.filter((dirent) => dirent.isDirectory() || dirent.isFile())
       )
       .then((dirents) =>
@@ -109,13 +110,13 @@ export default function ({
                     : "size=" + fstat.size.toString() + ";",
                   name
                 )
+              case "LIST":
               default:
                 return util.format(
-                  "%s 1 %s %s %s %s %s",
-                  fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--", // ignoring other node types: sym-links, pipes, etc.
-                  // skipping n-links
-                  username, // uid
-                  username, // gid
+                  "%s 1 %s %s %s %s %s", // showing link-count = 1
+                  fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--",
+                  username,
+                  username, // don't expose uid, gid
                   String(fstat.isDirectory() ? "0" : fstat.size).padStart(
                     14,
                     " "

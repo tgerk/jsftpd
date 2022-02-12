@@ -259,7 +259,7 @@ test("test RETR message with handler", async () => {
       })
     )
   )
-  
+
   server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
     hdl: {

@@ -34,7 +34,7 @@ export interface AuthHandlers {
   ): [LoginType, UserCredential?]
 }
 
-export type FolderListFormat = "MLSD" | "LIST"
+export type FolderListFormat = "NLST" | "MLSD" | "LIST"
 export interface BackendHandlers {
   resolveFolder(folder: string): Promise<string>
   resolveFile(file: string): Promise<string>
@@ -323,6 +323,7 @@ export function createFtpServer({
         MKD,
         LIST,
         MLSD: LIST,
+        NLST: LIST,
         PORT,
         PASV,
         EPRT,
@@ -720,8 +721,9 @@ export function createFtpServer({
       /*
        *  LIST
        *  MLSD
+       *  NLST
        */
-      function LIST(cmd: FolderListFormat) {
+      function LIST(cmd: FolderListFormat/* , (TODO optional parameter) folder: string */) {
         openDataSocket()
           .then((socket) => {
             folderList(cmd)

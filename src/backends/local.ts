@@ -96,6 +96,8 @@ export default function ({
           dirents.map(({ name }, i) => {
             const fstat = stats[i]
             switch (format) {
+              case "NLST":
+                return name
               case "MLSD":
                 return util.format(
                   "type=%s;modify=%s;%s %s",

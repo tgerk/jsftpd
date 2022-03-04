@@ -723,7 +723,9 @@ export function createFtpServer({
        *  MLSD
        *  NLST
        */
-      function LIST(cmd: FolderListFormat/* , (TODO optional parameter) folder: string */) {
+      function LIST(
+        cmd: FolderListFormat /* , (TODO optional parameter) folder: string */
+      ) {
         openDataSocket()
           .then((socket) => {
             folderList(cmd)

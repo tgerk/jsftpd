@@ -141,13 +141,13 @@ const AnonymousDefaults = {
 
 const UserDefaults = {
   allowLoginWithoutPassword: false,
-  allowUserFileCreate: true,
-  allowUserFileRetrieve: true,
-  allowUserFileOverwrite: true,
-  allowUserFileDelete: true,
-  allowUserFileRename: true,
-  allowUserFolderDelete: true,
-  allowUserFolderCreate: true,
+  allowUserFileCreate: false,
+  allowUserFileRetrieve: false,
+  allowUserFileOverwrite: false,
+  allowUserFileDelete: false,
+  allowUserFileRename: false,
+  allowUserFolderDelete: false,
+  allowUserFolderCreate: false,
 }
 
 const ConfigDefaults: ConfigOptions = Object.assign(
@@ -174,13 +174,13 @@ export function createFtpServer({
   let lastSessionKey = 0
   const openSessions: Map<number, Socket> = new Map()
 
-  const usingTLS = !!tlsConfig
   const config = {
-    ...ConfigDefaults,
-    ...cnf,
-    ...options,
-    tls: { ...TlsDefaults, ...tlsConfig },
-  }
+      ...ConfigDefaults,
+      ...cnf,
+      ...options,
+      tls: { ...TlsDefaults, ...tlsConfig },
+    },
+    usingTLS = !!tlsConfig
 
   // checks
   if (!fileHandlers && !fs.existsSync(config.basefolder)) {
@@ -1025,16 +1025,6 @@ export function createFtpServer({
         })
       }
 
-      authenticated = true
-      ;({
-        allowUserFileCreate = false,
-        allowUserFileRetrieve = false,
-        allowUserFileOverwrite = false,
-        allowUserFileDelete = false,
-        allowUserFileRename = false,
-        allowUserFolderDelete = false,
-        allowUserFolderCreate = false,
-      } = { ...UserDefaults, ...user })
       ;({
         resolveFolder,
         resolveFile,
@@ -1059,8 +1049,18 @@ export function createFtpServer({
         localFsBackend({ basefolder: config.basefolder, username, ...user }),
         fileHandlers
       ))
+      ;({
+        allowUserFileCreate = false,
+        allowUserFileRetrieve = false,
+        allowUserFileOverwrite = false,
+        allowUserFileDelete = false,
+        allowUserFileRename = false,
+        allowUserFolderDelete = false,
+        allowUserFolderCreate = false,
+      } = { ...UserDefaults, ...user })
       renameFile = ""
       restOffset = 0
+      authenticated = true
       return Promise.resolve()
     }
 
@@ -1306,17 +1306,11 @@ export function createFtpServer({
   const emitter = new EventEmitter()
 
   function ListenHandler(protocol: string, address: string | AddressInfo) {
-    DebugHandler(
-      `FTP server listening on ${util.inspect(address, {
-        showHidden: false,
-        depth: null,
-        breakLength: Infinity,
-      })}`
-    )
     emitter.emit("listen", {
       protocol,
-      address: (address as AddressInfo).address.replace(/::ffff:/g, ""),
+      address: (address as AddressInfo).address,
       port: (address as AddressInfo).port,
+      basefolder: config.basefolder
     })
   }
 

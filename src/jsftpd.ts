@@ -1310,7 +1310,7 @@ export function createFtpServer({
       protocol,
       address: (address as AddressInfo).address,
       port: (address as AddressInfo).port,
-      basefolder: config.basefolder
+      basefolder: config.basefolder,
     })
   }
 

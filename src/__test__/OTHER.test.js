@@ -746,7 +746,7 @@ test("test MFMT message file does not exist", async () => {
       allowLoginWithoutPassword: true,
       allowUserFileCreate: true,
       allowUserFileOverwrite: true,
-      allowUserFileRename: true
+      allowUserFileRename: true,
     },
   ]
   server = createServer({

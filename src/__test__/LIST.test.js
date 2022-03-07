@@ -137,7 +137,7 @@ test("test MLSD message over secure connection", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
-      allowUserFileCreate: true
+      allowUserFileCreate: true,
     },
   ]
   server = createServer({
@@ -163,7 +163,7 @@ test("test MLSD message over secure connection", async () => {
     new tls.connect({ socket: socket, rejectUnauthorized: false })
   )
   // eslint-disable-next-line @typescript-eslint/no-empty-function
-  promiseSocket.stream.once("secureConnect", function () { })
+  promiseSocket.stream.once("secureConnect", function () {})
 
   await promiseSocket.write("USER john")
   content = await promiseSocket.read()

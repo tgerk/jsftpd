@@ -250,7 +250,7 @@ test("test RETR message with handler", async () => {
     Promise.resolve(
       new Writable({
         write: (data, enc, cb) => {
-          doesFileExist = true;
+          doesFileExist = true
           cb()
         },
       })
@@ -266,7 +266,6 @@ test("test RETR message with handler", async () => {
       })
     )
   )
-  
 
   server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
@@ -352,7 +351,7 @@ test("test RETR message with handler fails", async () => {
     Promise.resolve(
       new Writable({
         write: (data, enc, cb) => {
-          doesFileExist = true;
+          doesFileExist = true
           cb()
         },
       })

@@ -35,6 +35,7 @@
     "eslint-config-standard": "*",
     "eslint-plugin-babel": "*",
     "eslint-plugin-import": "*",
+    "eslint-plugin-jest": "^26.1.1",
     "eslint-plugin-jsdoc": "*",
     "eslint-plugin-node": "*",
     "eslint-plugin-promise": "*",

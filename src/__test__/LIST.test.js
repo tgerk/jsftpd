@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
-const { PromiseSocket, TimeoutError } = require("promise-socket")
+const { PromiseSocket } = require("promise-socket")
 const { sleep, getCmdPortTCP, getDataPort, formatPort } = require("./utils")
 
 jest.setTimeout(5000)
@@ -39,7 +40,7 @@ test("test LIST message", async () => {
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
+  socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -60,7 +61,7 @@ test("test LIST message", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("LIST")
 
@@ -93,7 +94,7 @@ test("test MLSD message", async () => {
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
+  socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -113,7 +114,7 @@ test("test MLSD message", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("MLSD")
 
@@ -136,6 +137,7 @@ test("test MLSD message over secure connection", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true
     },
   ]
   server = createServer({
@@ -145,7 +147,7 @@ test("test MLSD message over secure connection", async () => {
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
+  socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -160,7 +162,8 @@ test("test MLSD message over secure connection", async () => {
   promiseSocket = new PromiseSocket(
     new tls.connect({ socket: socket, rejectUnauthorized: false })
   )
-  await promiseSocket.stream.once("secureConnect", function () {})
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  promiseSocket.stream.once("secureConnect", function () { })
 
   await promiseSocket.write("USER john")
   content = await promiseSocket.read()
@@ -184,6 +187,7 @@ test("test MLSD message over secure connection", async () => {
     new tls.connect(dataPort, localhost, { rejectUnauthorized: false })
   )
   let dataSocket = promiseDataSocket.stream
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   await dataSocket.once("secureConnect", function () {})
 
   await promiseSocket.write("STOR mytestfile")
@@ -219,7 +223,7 @@ test("test MLSD message with handler", async () => {
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
+  socket.connect(cmdPortTCP, localhost)
   content = await promiseSocket.read()
   expect(content.toString().trim()).toBe("220 Welcome")
 
@@ -235,7 +239,7 @@ test("test MLSD message with handler", async () => {
 
   let promiseDataSocket = new PromiseSocket(new net.Socket())
   let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  dataSocket.connect(dataPort, localhost)
 
   await promiseSocket.write("MLSD")
 

@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
-const { PromiseSocket, TimeoutError } = require("promise-socket")
+const { PromiseSocket } = require("promise-socket")
 const {
   sleep,
   getCmdPortTCP,
@@ -9,7 +10,6 @@ const {
   getDataPort,
   formatPort,
 } = require("./utils")
-const { fstat } = require("fs")
 
 jest.setTimeout(5000)
 let server,
@@ -628,6 +628,7 @@ test("test MFMT message", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
   server = createServer({
@@ -743,6 +744,9 @@ test("test MFMT message file does not exist", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+      allowUserFileOverwrite: true,
+      allowUserFileRename: true
     },
   ]
   server = createServer({
@@ -795,6 +799,7 @@ test("test DELE message without permission", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileDelete: false,
     },
   ]
@@ -848,6 +853,7 @@ test("test DELE message relative path", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileDelete: true,
     },
   ]
@@ -905,6 +911,7 @@ test("test DELE message absolute path", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileDelete: true,
     },
   ]
@@ -958,6 +965,7 @@ test("test SIZE message", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
   server = createServer({
@@ -1040,6 +1048,7 @@ test("test AUTH message", async () => {
   promiseSocket = new PromiseSocket(
     new tls.connect({ socket: socket, rejectUnauthorized: false })
   )
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   await promiseSocket.stream.once("secureConnect", function () {})
 
   await promiseSocket.write("USER john")

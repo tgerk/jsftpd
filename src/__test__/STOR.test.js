@@ -1,18 +1,14 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
-const tls = require("tls")
-const path = require("path")
-const fs = require("fs/promises")
-const { PromiseSocket, TimeoutError } = require("promise-socket")
-const { sleep, getCmdPortTCP, getDataPort } = require("./utils")
-const { fstat } = require("fs")
+const { PromiseSocket } = require("promise-socket")
+const { sleep, getDataPort } = require("./utils")
 const { Writable } = require("stream")
 
 jest.setTimeout(5000)
 let server,
   content,
   dataContent = null
-const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
@@ -74,6 +70,7 @@ test("test STOR message", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
   server = createServer({
@@ -152,6 +149,7 @@ test("test STOR message with ASCII", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
   server = createServer({
@@ -236,6 +234,7 @@ test("test STOR message overwrite not allowed", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileOverwrite: false,
     },
   ]
@@ -319,6 +318,7 @@ test("test STOR message with handler", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
   const fileStore = jest.fn().mockImplementationOnce(() =>
@@ -335,7 +335,7 @@ test("test STOR message with handler", async () => {
     cnf: { port: 50021, user: users, minDataPort: dataPort },
     hdl: {
       fileExists() {
-        return Promise.resolve(true)
+        return Promise.resolve(false)
       },
       fileStore,
     },
@@ -386,16 +386,9 @@ test("test STOR message with handler fails", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
-  const handler = async (username, path, filename, data, offset) => {
-    expect(username).toMatch("john")
-    expect(filename).toMatch("mytestfile")
-    expect(path).toMatch("/")
-    expect(data.toString()).toMatch("SOMETESTCONTENT")
-    expect(offset).toBe(0)
-    return false
-  }
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
       new Writable({
@@ -410,7 +403,7 @@ test("test STOR message with handler fails", async () => {
     cnf: { port: 50021, user: users, minDataPort: dataPort },
     hdl: {
       fileExists() {
-        return Promise.resolve(true)
+        return Promise.resolve(false)
       },
       fileStore,
     },

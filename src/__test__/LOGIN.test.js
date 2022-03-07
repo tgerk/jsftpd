@@ -1,15 +1,12 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
-const tls = require("tls")
-const { PromiseSocket, TimeoutError } = require("promise-socket")
-const { getCmdPortTCP, getDataPort } = require("./utils")
+const { PromiseSocket } = require("promise-socket")
+const { getCmdPortTCP } = require("./utils")
 
 jest.setTimeout(5000)
-let server,
-  content,
-  dataContent = null
+let server, content
 const cmdPortTCP = getCmdPortTCP()
-const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
 const cleanup = function () {
@@ -19,7 +16,6 @@ const cleanup = function () {
     server = null
   }
   content = ""
-  dataContent = ""
 }
 beforeEach(() => cleanup())
 afterEach(() => cleanup())

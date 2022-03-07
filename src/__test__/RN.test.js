@@ -1,14 +1,13 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
-const tls = require("tls")
-const { PromiseSocket, TimeoutError } = require("promise-socket")
-const { sleep, getCmdPortTCP, getDataPort } = require("./utils")
+const { PromiseSocket } = require("promise-socket")
+const { sleep, getDataPort } = require("./utils")
 
 jest.setTimeout(5000)
 let server,
   content,
   dataContent = null
-const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
@@ -29,6 +28,7 @@ test("test RNFR message file does not exist", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
     },
   ]
   server = createServer({
@@ -81,6 +81,8 @@ test("test RNFR/RNTO message", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+      allowUserFileRename: true,
     },
   ]
   server = createServer({
@@ -161,6 +163,7 @@ test("test RNFR/RNTO message using handlers", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileRename: true,
     },
   ]
   const fileRename = jest
@@ -206,6 +209,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileRename: true,
     },
   ]
   const fileRename = jest
@@ -251,6 +255,8 @@ test("test RNFR/RNTO message file already exists", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+      allowUserFileRename: true,
     },
   ]
   server = createServer({

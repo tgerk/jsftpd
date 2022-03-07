@@ -19,6 +19,27 @@ import { EventEmitter } from "events"
 
 import Deferred from "./deferred"
 import localFsBackend from "./backends/local"
+import basicAuth from "./backends/auth"
+
+export enum userPermissions {
+  allowUserFolderCreate = "allowUserFolderCreate",
+  allowUserFolderDelete = "allowUserFolderDelete",
+  allowUserFileCreate = "allowUserFileCreate",
+  allowUserFileRetrieve = "allowUserFileRetrieve",
+  allowUserFileOverwrite = "allowUserFileOverwrite",
+  allowUserFileRename = "allowUserFileRename",
+  allowUserFileDelete = "allowUserFileDelete",
+}
+
+export enum anonPermissions {
+  allowAnonymousFileCreate = "allowAnonymousFileCreate",
+  allowAnonymousFileRetrieve = "allowAnonymousFileRetrieve",
+  allowAnonymousFileOverwrite = "allowAnonymousFileOverwrite",
+  allowAnonymousFileDelete = "allowAnonymousFileDelete",
+  allowAnonymousFileRename = "allowAnonymousFileRename",
+  allowAnonymousFolderDelete = "allowAnonymousFolderDelete",
+  allowAnonymousFolderCreate = "allowAnonymousFolderCreate",
+}
 
 export enum LoginType {
   None,
@@ -26,9 +47,10 @@ export enum LoginType {
   Password,
   NoPassword,
 }
+
 export interface AuthHandlers {
-  validateLoginType(username: string): [LoginType, UserCredential?]
-  authenticateUser(
+  userLoginType(username: string): [LoginType, UserCredential?]
+  userAuthenticate(
     username: string,
     password: string
   ): [LoginType, UserCredential?]
@@ -61,38 +83,17 @@ export interface BackendHandlers {
 }
 
 export type AnonymousPermissions = {
-  allowAnonymousFileCreate?: boolean
-  allowAnonymousFileRetrieve?: boolean
-  allowAnonymousFileOverwrite?: boolean
-  allowAnonymousFileDelete?: boolean
-  allowAnonymousFileRename?: boolean
-  allowAnonymousFolderDelete?: boolean
-  allowAnonymousFolderCreate?: boolean
+  [key in anonPermissions]?: boolean
 }
 
 export type UserPermissions = {
-  allowUserFileCreate?: boolean
-  allowUserFileRetrieve?: boolean
-  allowUserFileOverwrite?: boolean
-  allowUserFileDelete?: boolean
-  allowUserFileRename?: boolean
-  allowUserFolderDelete?: boolean
-  allowUserFolderCreate?: boolean
+  [key in userPermissions]?: boolean
 }
 
-export const allUserPermissions = [
-  "allowUserFolderCreate",
-  "allowUserFolderDelete",
-  "allowUserFileCreate",
-  "allowUserFileRetrieve",
-  "allowUserFileOverwrite",
-  "allowUserFileRename",
-  "allowUserFileDelete",
-]
-
 export type UserCredential = {
-  basefolder?: string
   allowLoginWithoutPassword?: boolean
+  password?: string
+  basefolder?: string
 } & UserPermissions
 
 export type ConfigOptions = {
@@ -100,21 +101,18 @@ export type ConfigOptions = {
   securePort?: number
   maxConnections?: number
   minDataPort?: number
+  tls?: TlsOptions
 
   allowAnonymousLogin?: boolean
+  username?: string
   user?: ({
     username: string
-    password?: string
-  } & UserCredential)[]
+  } & UserCredential)[] // goofy to iterate an array when could map {[username]: credential}
 
-  username?: string
-  password?: string
+  auth?: AuthHandlers
+  hdl?: BackendHandlers
 } & UserCredential &
-  AnonymousPermissions & {
-    tls?: TlsOptions
-    hdl?: BackendHandlers
-    auth?: AuthHandlers
-  }
+  AnonymousPermissions
 
 const defaultBaseFolder = path.join(process.cwd(), "jsftpd-tmp")
 const defaultCert = Buffer.from(
@@ -128,45 +126,19 @@ const TlsDefaults: TlsOptions = {
   rejectUnauthorized: false,
 }
 
-const AnonymousDefaults = {
-  allowAnonymousLogin: false,
-  allowAnonymousFileCreate: false,
-  allowAnonymousFileRetrieve: false,
-  allowAnonymousFileOverwrite: false,
-  allowAnonymousFileDelete: false,
-  allowAnonymousFileRename: false,
-  allowAnonymousFolderDelete: false,
-  allowAnonymousFolderCreate: false,
-}
-
-const UserDefaults = {
-  allowLoginWithoutPassword: false,
-  allowUserFileCreate: false,
-  allowUserFileRetrieve: false,
-  allowUserFileOverwrite: false,
-  allowUserFileDelete: false,
-  allowUserFileRename: false,
-  allowUserFolderDelete: false,
-  allowUserFolderCreate: false,
-}
-
-const ConfigDefaults: ConfigOptions = Object.assign(
-  {
-    port: 21,
-    securePort: 990,
-    maxConnections: 10,
-    minDataPort: 1024,
-    basefolder: defaultBaseFolder,
-  },
-  AnonymousDefaults,
-  UserDefaults
-)
+const ConfigDefaults: ConfigOptions = Object.assign({
+  port: 21,
+  securePort: 990,
+  maxConnections: 10,
+  minDataPort: 1024,
+  basefolder: defaultBaseFolder,
+})
 
 export function createFtpServer({
   cnf,
   tls: tlsConfig,
-  hdl: fileHandlers,
-  auth: authHandlers,
+  auth: authBackend,
+  hdl: backend,
   ...options
 }: ConfigOptions & {
   cnf?: ConfigOptions
@@ -182,8 +154,15 @@ export function createFtpServer({
     },
     usingTLS = !!tlsConfig
 
+  // the following methods may be overridden by dependency injection, not externalized due to close dependence on config options
+  const { userLoginType, userAuthenticate }: AuthHandlers = Object.assign(
+    {},
+    basicAuth(config),
+    authBackend
+  )
+
   // checks
-  if (!fileHandlers && !fs.existsSync(config.basefolder)) {
+  if (!backend && !fs.existsSync(config.basefolder)) {
     if (config.basefolder === defaultBaseFolder) {
       fs.mkdirSync(defaultBaseFolder)
     } else {
@@ -258,7 +237,7 @@ export function createFtpServer({
       allowUserFileRename = false,
       allowUserFolderDelete = false,
       allowUserFolderCreate = false,
-    } = UserDefaults
+    }: UserPermissions = {}
 
     let {
       resolveFolder,
@@ -282,7 +261,7 @@ export function createFtpServer({
     }: BackendHandlers = Object.assign(
       {},
       localFsBackend({ basefolder: config.basefolder }),
-      fileHandlers
+      backend
     )
 
     let renameFile = ""
@@ -370,11 +349,11 @@ export function createFtpServer({
       function USER(cmd: string, user: string) {
         username = user
         authenticated = false
-        const [loginType, userRights] = validateLoginType(username)
+        const [loginType, userCredential] = userLoginType(username)
         switch (loginType) {
           case LoginType.NoPassword:
             DebugHandler(`${remoteInfo} username[${username}] no password`)
-            setUserRights(userRights).then(() => {
+            setUserRights(userCredential).then(() => {
               LoginHandler()
               client.respond("232", "User logged in")
             })
@@ -391,14 +370,14 @@ export function createFtpServer({
        *  PASS
        */
       function PASS(cmd: string, password: string) {
-        const [loginType, userRights] = authenticateUser(username, password)
+        const [loginType, userCredential] = userAuthenticate(username, password)
         switch (loginType) {
           case LoginType.Anonymous:
             username = `anon(${password})`
           case LoginType.NoPassword: // eslint-disable-line no-fallthrough
           case LoginType.Password:
             DebugHandler(`${remoteInfo} username[${username}] authenticated`)
-            setUserRights(userRights).then(() => {
+            setUserRights(userCredential).then(() => {
               LoginHandler()
               client.respond("230", "Logged on")
             })
@@ -929,25 +908,23 @@ export function createFtpServer({
        *  RNFR
        */
       function RNFR(cmd: string, file: string) {
-        if (!allowUserFileRename) {
-          client.respond("550", "Permission denied")
-        } else {
-          resolveFile(file).then(
-            (file) =>
-              fileExists(file).then((isFile) => {
-                if (isFile) {
-                  renameFile = file
-                  client.respond("350", "File exists")
-                } else {
-                  client.respond("550", "File does not exist")
-                }
-              }),
-            (error) => {
-              DebugHandler(error)
-              client.respond("501", "Command failed")
-            }
-          )
-        }
+        resolveFile(file).then(
+          (file) =>
+            fileExists(file).then((isFile) => {
+              if (!isFile) {
+                client.respond("550", "File does not exist")
+              } else if (!allowUserFileRename) {
+                client.respond("550", "Permission denied")
+              } else {
+                renameFile = file
+                client.respond("350", "File exists")
+              }
+            }),
+          (error) => {
+            DebugHandler(error)
+            client.respond("501", "Command failed")
+          }
+        )
       }
 
       /*
@@ -1018,8 +995,8 @@ export function createFtpServer({
       }
     }
 
-    function setUserRights(user: UserCredential) {
-      if ("basefolder" in user && !fs.existsSync(user.basefolder)) {
+    function setUserRights({ basefolder, ...permissions }: UserCredential) {
+      if (basefolder && !fs.existsSync(basefolder)) {
         throw Object.assign(Error("user directory does not exist"), {
           code: "ENOTDIR",
         })
@@ -1046,8 +1023,11 @@ export function createFtpServer({
         fileSetTimes,
       } = Object.assign(
         {},
-        localFsBackend({ basefolder: config.basefolder, username, ...user }),
-        fileHandlers
+        localFsBackend({
+          basefolder: basefolder ?? config.basefolder,
+          username,
+        }),
+        backend
       ))
       ;({
         allowUserFileCreate = false,
@@ -1057,7 +1037,7 @@ export function createFtpServer({
         allowUserFileRename = false,
         allowUserFolderDelete = false,
         allowUserFolderCreate = false,
-      } = { ...UserDefaults, ...user })
+      } = permissions)
       renameFile = ""
       restOffset = 0
       authenticated = true
@@ -1206,103 +1186,6 @@ export function createFtpServer({
     }
   }
 
-  // the following methods may be overridden by dependency injection, not externalized due to close dependence on config options
-  const { validateLoginType, authenticateUser } = authHandlers ?? {
-    validateLoginType(username: string): [LoginType, UserCredential?] {
-      if (username === "anonymous") {
-        if (config.allowAnonymousLogin) {
-          return [LoginType.Anonymous]
-        }
-      } else if (config.user?.length > 0) {
-        const user = config.user.find((u) => username === u.username)
-        if (user) {
-          if (user.allowLoginWithoutPassword) {
-            return [
-              LoginType.NoPassword,
-              allUserPermissions.reduce((o: UserPermissions, k) => {
-                o[k as keyof UserPermissions] =
-                  user[k as keyof UserPermissions] ??
-                  UserDefaults[k as keyof UserPermissions]
-                return o
-              }, {}),
-            ]
-          } else {
-            return [LoginType.Password]
-          }
-        }
-      } else if (username === config.username) {
-        if (config.allowLoginWithoutPassword === true) {
-          return [
-            LoginType.NoPassword,
-            allUserPermissions.reduce((o: UserPermissions, k) => {
-              o[k as keyof UserPermissions] =
-                config[k as keyof UserPermissions] ??
-                UserDefaults[k as keyof UserPermissions]
-              return o
-            }, {}),
-          ]
-        } else {
-          return [LoginType.Password]
-        }
-      }
-      return [LoginType.None]
-    },
-
-    authenticateUser(
-      username: string,
-      password: string
-    ): [LoginType, UserCredential?] {
-      if (username === "anonymous") {
-        if (config.allowAnonymousLogin) {
-          return [
-            LoginType.Anonymous,
-            allUserPermissions.reduce((o: UserPermissions, k) => {
-              const ak = k.replace("allowUser", "allowAnonymous")
-              o[k as keyof UserPermissions] =
-                config[ak as keyof AnonymousPermissions] ??
-                AnonymousDefaults[ak as keyof AnonymousPermissions]
-              return o
-            }, {}),
-          ]
-        }
-      } else if (config.user?.length > 0) {
-        const user = config.user.find((u) => username === u.username)
-        if (
-          user &&
-          (user.allowLoginWithoutPassword || password === user.password)
-        ) {
-          return [
-            user.allowLoginWithoutPassword
-              ? LoginType.NoPassword
-              : LoginType.Password,
-            allUserPermissions.reduce((o: UserPermissions, k) => {
-              o[k as keyof UserPermissions] =
-                user[k as keyof UserPermissions] ??
-                UserDefaults[k as keyof UserPermissions]
-              return o
-            }, {}),
-          ]
-        }
-      } else if (
-        username === config.username &&
-        (config.allowLoginWithoutPassword || password === config.password)
-      ) {
-        return [
-          config.allowLoginWithoutPassword
-            ? LoginType.NoPassword
-            : LoginType.Password,
-          allUserPermissions.reduce((o: UserPermissions, k) => {
-            o[k as keyof UserPermissions] =
-              config[k as keyof UserPermissions] ??
-              UserDefaults[k as keyof UserPermissions]
-            return o
-          }, {}),
-        ]
-      }
-      return [LoginType.None]
-    },
-  }
-
   const emitter = new EventEmitter()
 
   function ListenHandler(protocol: string, address: string | AddressInfo) {
@@ -1353,7 +1236,7 @@ export function createFtpServer({
     },
 
     cleanup() {
-      if (!fileHandlers && config.basefolder === defaultBaseFolder) {
+      if (!backend && config.basefolder === defaultBaseFolder) {
         fs.rmSync(defaultBaseFolder, { force: true, recursive: true })
       }
     },

@@ -1,7 +1,7 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
-const tls = require("tls")
-const { PromiseSocket, TimeoutError } = require("promise-socket")
+const { PromiseSocket } = require("promise-socket")
 const { sleep, getCmdPortTCP, getDataPort } = require("./utils")
 const { Readable, Writable } = require("stream")
 
@@ -30,6 +30,7 @@ test("test RETR message not allowed", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileRetrieve: false,
     },
   ]
@@ -83,6 +84,7 @@ test("test RETR message", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileRetrieve: true,
     },
   ]
@@ -154,6 +156,7 @@ test("test RETR message with ASCII", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileRetrieve: true,
     },
   ]
@@ -237,13 +240,17 @@ test("test RETR message with handler", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileRetrieve: true,
     },
   ]
+
+  let doesFileExist = false
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
       new Writable({
         write: (data, enc, cb) => {
+          doesFileExist = true;
           cb()
         },
       })
@@ -259,12 +266,13 @@ test("test RETR message with handler", async () => {
       })
     )
   )
+  
 
   server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
     hdl: {
       fileExists() {
-        return Promise.resolve(true)
+        return Promise.resolve(doesFileExist)
       },
       fileRetrieve,
       fileStore,
@@ -334,13 +342,17 @@ test("test RETR message with handler fails", async () => {
     {
       username: "john",
       allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
       allowUserFileRetrieve: true,
     },
   ]
+
+  let doesFileExist = false
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
       new Writable({
         write: (data, enc, cb) => {
+          doesFileExist = true;
           cb()
         },
       })
@@ -359,7 +371,7 @@ test("test RETR message with handler fails", async () => {
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
     hdl: {
       fileExists() {
-        return Promise.resolve(true)
+        return Promise.resolve(doesFileExist)
       },
       fileRetrieve,
       fileStore,

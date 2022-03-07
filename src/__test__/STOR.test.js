@@ -333,12 +333,12 @@ test("test STOR message with handler", async () => {
 
   server = createServer({
     cnf: { port: 50021, user: users, minDataPort: dataPort },
-    hdl: {
+    hdl: () => ({
       fileExists() {
         return Promise.resolve(false)
       },
       fileStore,
-    },
+    }),
   })
   server.start()
 
@@ -401,12 +401,12 @@ test("test STOR message with handler fails", async () => {
 
   server = createServer({
     cnf: { port: 50021, user: users, minDataPort: dataPort },
-    hdl: {
+    hdl: () => ({
       fileExists() {
         return Promise.resolve(false)
       },
       fileStore,
-    },
+    }),
   })
   server.start()
 

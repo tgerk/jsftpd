@@ -711,14 +711,14 @@ test("test MFMT message with handler", async () => {
   ]
   server = createServer({
     cnf: { port: cmdPortTCP, user: users },
-    hdl: {
+    hdl: () => ({
       fileExists() {
         return Promise.resolve(true)
       },
       fileSetTimes() {
         return Promise.resolve()
       },
-    },
+    }),
   })
   server.start()
 

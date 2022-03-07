@@ -1,13 +1,14 @@
 import {
   LoginType,
+  anonPermissions,
   AnonymousPermissions,
+  userPermissions,
   UserPermissions,
   UserCredential,
-  anonPermissions,
-  userPermissions,
+  AuthOptions,
 } from "../jsftpd"
 
-const defaults: UserPermissions = {
+const defaults: UserPermissions = { // TODO: construct by interation on values of enum userPermissions
   allowUserFileCreate: false,
   allowUserFileRetrieve: false,
   allowUserFileOverwrite: false,
@@ -28,9 +29,10 @@ function getAnonPermissions(permissions: AnonymousPermissions) {
   return credential
 }
 
-function getUserPermissions({ basefolder, ...permissions }: UserCredential) {
+function getUserPermissions({ basefolder, filenameTransform, ...permissions }: UserCredential) {
   const credential: UserCredential = { ...defaults }
   if (basefolder) credential.basefolder = basefolder
+  if (filenameTransform) credential.filenameTransform = filenameTransform
   for (const k in credential) {
     if (k in permissions) {
       credential[k as userPermissions] = permissions[k as userPermissions]
@@ -40,20 +42,13 @@ function getUserPermissions({ basefolder, ...permissions }: UserCredential) {
 }
 
 export default ({
+  user: users,
   allowAnonymousLogin,
   username: defaultUser,
   password: defaultPassword,
   allowLoginWithoutPassword,
-  user: users,
-  ...defaultUserCredential
-}: {
-  allowAnonymousLogin?: boolean
-  username?: string
-  user?: ({
-    username: string
-  } & UserCredential)[]
-} & UserCredential &
-  AnonymousPermissions) => ({
+  ...config
+}: AuthOptions) => ({
   userLoginType(username: string): [LoginType, UserCredential?] {
     if (username === "anonymous") {
       if (allowAnonymousLogin) {
@@ -70,7 +65,7 @@ export default ({
       }
     } else if (username === defaultUser) {
       if (allowLoginWithoutPassword === true) {
-        return [LoginType.NoPassword, getUserPermissions(defaultUserCredential)]
+        return [LoginType.NoPassword, getUserPermissions(config)]
       } else {
         return [LoginType.Password]
       }
@@ -84,7 +79,7 @@ export default ({
   ): [LoginType, UserCredential?] {
     if (username === "anonymous") {
       if (allowAnonymousLogin) {
-        return [LoginType.Anonymous, getAnonPermissions(defaultUserCredential)]
+        return [LoginType.Anonymous, getAnonPermissions(config)]
       }
     } else if (users?.length > 0) {
       const user = users.find(({ username: user }) => username === user)
@@ -105,7 +100,7 @@ export default ({
     ) {
       return [
         allowLoginWithoutPassword ? LoginType.NoPassword : LoginType.Password,
-        getUserPermissions(defaultUserCredential),
+        getUserPermissions(config),
       ]
     }
     return [LoginType.None]

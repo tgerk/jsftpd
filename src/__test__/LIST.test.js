@@ -217,9 +217,11 @@ test("test MLSD message with handler", async () => {
   const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
   server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: { folderList },
+    hdl: () => ({ folderList }),
   })
   server.start()
+  server.on("log", console.info)
+  server.on("debug", console.debug)
 
   let promiseSocket = new PromiseSocket(new net.Socket())
   let socket = promiseSocket.stream

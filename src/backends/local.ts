@@ -2,15 +2,20 @@ import util from "util"
 import path from "path"
 import fs from "fs/promises"
 
-import { FolderListFormat, getDateForLIST, getDateForMLSD } from "../jsftpd"
+import {
+  FolderListFormat,
+  getDateForLIST,
+  getDateForMLSD,
+  UserCredential,
+} from "../jsftpd"
 
 export default function ({
   basefolder: baseFolder,
   username = "nobody",
+  filenameTransform,
 }: {
-  basefolder: string
   username?: string
-}) {
+} & UserCredential) {
   baseFolder = path.join(baseFolder)
 
   function resolveFolder(folder: string): Promise<string> {
@@ -33,7 +38,9 @@ export default function ({
         : path.join(baseFolder, currentFolder, file)
     return new Promise((resolve, reject) => {
       if (file.startsWith(baseFolder)) {
-        resolve(path.relative(path.join(baseFolder, currentFolder), file))
+        file = path.relative(path.join(baseFolder, currentFolder), file)
+        file = filenameTransform?.in?.(file) ?? file
+        resolve(file)
       }
       reject() // no jailbreak!
     })
@@ -51,6 +58,7 @@ export default function ({
       }
     })
   }
+
   function getFolder() {
     return currentFolder
   }
@@ -80,9 +88,11 @@ export default function ({
       })
   }
 
-  function folderList(format: FolderListFormat) {
+  function folderList(format: FolderListFormat, folder = "") {
     return fs
-      .readdir(path.join(baseFolder, currentFolder), { withFileTypes: true })
+      .readdir(path.join(baseFolder, currentFolder, folder), {
+        withFileTypes: true,
+      })
       .then((dirents) =>
         // skip other node types: sym-links, pipes, etc.
         dirents.filter((dirent) => dirent.isDirectory() || dirent.isFile())
@@ -94,6 +104,7 @@ export default function ({
           )
         ).then((stats) =>
           dirents.map(({ name }, i) => {
+            name = filenameTransform?.out?.(name) ?? name
             const fstat = stats[i]
             switch (format) {
               case "NLST":

@@ -269,13 +269,13 @@ test("test RETR message with handler", async () => {
 
   server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: {
+    hdl: () => ({
       fileExists() {
         return Promise.resolve(doesFileExist)
       },
       fileRetrieve,
       fileStore,
-    },
+    }),
   })
   server.start()
 
@@ -368,13 +368,13 @@ test("test RETR message with handler fails", async () => {
   )
   server = createServer({
     cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: {
+    hdl: () => ({
       fileExists() {
         return Promise.resolve(doesFileExist)
       },
       fileRetrieve,
       fileStore,
-    },
+    }),
   })
   server.start()
 
@@ -449,11 +449,11 @@ test("test RETR message no active or passive mode", async () => {
   ]
   server = createServer({
     cnf: { port: cmdPortTCP, user: users },
-    hdl: {
+    hdl: () => ({
       fileExists() {
         return Promise.resolve(true)
       },
-    },
+    }),
   })
   server.start()
 

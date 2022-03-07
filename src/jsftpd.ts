@@ -19,27 +19,7 @@ import { EventEmitter } from "events"
 
 import Deferred from "./deferred"
 import localFsBackend from "./backends/local"
-import basicAuth from "./backends/auth"
-
-export enum userPermissions {
-  allowUserFolderCreate = "allowUserFolderCreate",
-  allowUserFolderDelete = "allowUserFolderDelete",
-  allowUserFileCreate = "allowUserFileCreate",
-  allowUserFileRetrieve = "allowUserFileRetrieve",
-  allowUserFileOverwrite = "allowUserFileOverwrite",
-  allowUserFileRename = "allowUserFileRename",
-  allowUserFileDelete = "allowUserFileDelete",
-}
-
-export enum anonPermissions {
-  allowAnonymousFileCreate = "allowAnonymousFileCreate",
-  allowAnonymousFileRetrieve = "allowAnonymousFileRetrieve",
-  allowAnonymousFileOverwrite = "allowAnonymousFileOverwrite",
-  allowAnonymousFileDelete = "allowAnonymousFileDelete",
-  allowAnonymousFileRename = "allowAnonymousFileRename",
-  allowAnonymousFolderDelete = "allowAnonymousFolderDelete",
-  allowAnonymousFolderCreate = "allowAnonymousFolderCreate",
-}
+import configAuthBackend from "./backends/auth"
 
 export enum LoginType {
   None,
@@ -47,6 +27,44 @@ export enum LoginType {
   Password,
   NoPassword,
 }
+
+export type anonPermissions =
+  | "allowAnonymousFileCreate"
+  | "allowAnonymousFileRetrieve"
+  | "allowAnonymousFileOverwrite"
+  | "allowAnonymousFileDelete"
+  | "allowAnonymousFileRename"
+  | "allowAnonymousFolderDelete"
+  | "allowAnonymousFolderCreate"
+
+export type AnonymousPermissions = {
+  [key in anonPermissions]?: boolean
+}
+
+export type userPermissions =
+  | "allowUserFolderCreate"
+  | "allowUserFolderDelete"
+  | "allowUserFileCreate"
+  | "allowUserFileRetrieve"
+  | "allowUserFileOverwrite"
+  | "allowUserFileRename"
+  | "allowUserFileDelete"
+
+export type UserPermissions = {
+  [key in userPermissions]?: boolean
+}
+
+export type FilenameTransformer = {
+  in: (file: string) => string
+  out: (file: string) => string
+}
+
+export type UserCredential = {
+  password?: string
+  basefolder?: string
+  allowLoginWithoutPassword?: boolean
+  filenameTransform?: FilenameTransformer
+} & UserPermissions
 
 export interface AuthHandlers {
   userLoginType(username: string): [LoginType, UserCredential?]
@@ -67,7 +85,7 @@ export interface BackendHandlers {
   folderExists: (folder: string) => Promise<boolean>
   folderCreate: (folder: string) => Promise<void>
   folderDelete: (folder: string) => Promise<void>
-  folderList: (format: FolderListFormat) => Promise<string[]>
+  folderList: (format: FolderListFormat, folder?: string) => Promise<string[]>
 
   fileExists: (file: string) => Promise<boolean>
   fileSize: (file: string) => Promise<number>
@@ -82,39 +100,20 @@ export interface BackendHandlers {
   fileSetTimes: (file: string, mtime: number) => Promise<void>
 }
 
-export type AnonymousPermissions = {
-  [key in anonPermissions]?: boolean
-}
-
-export type UserPermissions = {
-  [key in userPermissions]?: boolean
-}
-
-export type UserCredential = {
-  allowLoginWithoutPassword?: boolean
-  password?: string
-  basefolder?: string
-} & UserPermissions
+export type AuthOptions = {
+  allowAnonymousLogin?: boolean
+  username?: string
+  user?: ({ username: string } & UserCredential)[] // seems goofy to iterate an array when could map {[username]: credential}
+} & AnonymousPermissions &
+  UserCredential
 
 export type ConfigOptions = {
   port?: number
   securePort?: number
   maxConnections?: number
   minDataPort?: number
-  tls?: TlsOptions
+} & AuthOptions
 
-  allowAnonymousLogin?: boolean
-  username?: string
-  user?: ({
-    username: string
-  } & UserCredential)[] // goofy to iterate an array when could map {[username]: credential}
-
-  auth?: AuthHandlers
-  hdl?: BackendHandlers
-} & UserCredential &
-  AnonymousPermissions
-
-const defaultBaseFolder = path.join(process.cwd(), "jsftpd-tmp")
 const defaultCert = Buffer.from(
   "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFb3dJQkFBS0NBUUVBdHpOM1dKdHE5MjAzYWQ0eFRxb2hHM3hLUVdvUnJFejArd3JTUnNhZitMQTQzSWQ4CjRWUUU0elpsaEhSRVJzSGJjQkdGd0dNTEwxaGJXTWc3eDErSFhKYXlxNXJwcldTZ1g4TVRwZllkN2RUNkxRT3oKdmdBTUx3WUJwM3VkYm5IM2tyUERQazBibWRDcTZ4RmxqaUR4bHB6dWxIN1Vqb2crRE1XYmdpVHFYU2YrUThZTwpXS2xVRXhMVzZ5L3hFNUNIVVN3ZGI3MWREc2pDSG90YWliTTNXdlpGdEc3MnAvUXBaWldtZmQreEQwL3VoVnhNCnBualR0S21xWlMwcnJZM3Y1SFR5dVpBMUJRMFBVWmV0NzdLdWZKUis2aVlzQjQ4Z3NSM0szNmd6WHoyMzRXUXUKbEppcWk0dXo4Wjk1LzQyZmJOUlR3eWxRZXBQY1Ruc0Rib0Y0Q1FJREFRQUJBb0lCQVFDanR1UmlWSkVraDM5TApwbm9kdUQ5WjFwcHRGcUt3ZlIwMzhwV3pGZkVEUmtlcUc1SG5zek9pOEl1TDhITExZSlgrOGttNmdVZ1BpVUFvCmVOZWk5YVY3Z2xnc3JvVkFwSG9FMmNtSE9BZks3OWFadjRNeXVjd3BnWTZjNHdUdkcvMklKZ2pHZGhYQ1FRMWMKZi9Gbkw5MTFJTXk3K3hOc1JDaGZOWUFncjJpWTBZOUpRQndncTlJM1BWZ1RGQUtkTTBKZ1hySzhXVCtsN3NDRQpWc0kyUkVnYUxzeUxud2VmYnRwbVV0ankrbWtLemIzcnNyY1JVVmJOZjB3aEFlTG9HS01wZjVPNVUzMVNjd2xwClB2RnpHWkUyM01HbHpheGpZVVJTVmV3TFlzR2dwNTg5SDF6WmZaQVhSRWRiOEx2MGYra0I5MSthUi9Hdy9IT3gKS3ZlVXEvTVpBb0dCQU9BQkhxWWdXNmFwM3BjMjZJNVdNNURrMnJ1TnArRENQbzJUV3RRTklwTlREMEorRWt6SgpMZ1ZEK0xGVWZmNDFTQlZEbWZXR2x3cnVtajdWWGtTbjZyWmZXQUVKYTBySkljdHV3TDcxQ1Y0Q280cnFsUGlpCnhEazdhUFpYSXJBcjdaOG5UOG1kVStmcENMS1FNVUhYY0wydDI0cE85NytFVGVycVVYcGtEQXVEQW9HQkFORmUKVitZYThuVGxjVVhkbktqQVU4czJNSlhUUFZkeDlIM3BzQjNOVjJtR2lmM1h2d2F6ei9mYTg5NG5Ha3FxS2N6cwppV1BLdlR0MytVdUwxSlhWSlcwMllycHpUMlpMd2lqY3pCQlc1OGtIeU9UUGZ4UENjemh1dGlQUHJoMnQwbGJtCkR6WFpuTzJPUlpJWlp3MFllVFlNVzFUcnZ3WnRpT0VxMFp4cVVkeURBb0dBYld0K21pMmlOMll3NmZLVFpMdnMKMG5GSCsyZTF3bzkvMk01TEJ0d25zSWxaSWVUTmNaNndFVGhqcWRPWSsrencraG9jZ1pldC9sUVJHbkpGYXdvUApGK2k0NTBDL25UZGtmNmZwRlI1QzVoNHAzdmk1cmo1cjFYMFV4NGhHMUlHUXdEYUd2ZmhRL1M2UzVnNlRVUk00CjZoNmI2QktzNkd0cldEMy9jT2FnRDVzQ2dZQXpwNHdXS0dYVE0xeHIrVTRTVUVrY0pNVjk0WDBMMndDUUpCeWcKYmEzNFNnbzNoNGdJdGtwRUExQVJhaUpSYzRRV20vRVZuc3BySnFGcDR4alMwcUNHUGxuRFdIbXBhbDEveVdITApValdqWW5sTkFtaCt6b1d3MFplOFpCdTRGTStGUXdOVHJObkx2a01wMVh5WVBZYUNNREJFVmxsdDA0NW14ektwCjNZMU8wd0tCZ0FHaVkyNVZLOGJyMVFydXlzM3Vhb21LQ3BYUmhjZU15eHdBazdxeUlpNnpHeEx3bnFaVldaQmQKbkcxbkFaT2JET1JSTGRBRktPZ2tncGtVbGgrTEE3dTRuUytGWEdteGtLZlF1cTNTcTNaWHhiTjMxcXBCcERHTQoxbE9QSlVWY2UxV3ZyeXcrWVI4M1VFQ0ZTOEZjeDdibEVEM3oyNnVOQnN0dlBwVTUrV3ZxCi0tLS0tRU5EIFJTQSBQUklWQVRFIEtFWS0tLS0tCi0tLS0tQkVHSU4gQ0VSVElGSUNBVEUtLS0tLQpNSUlDNGpDQ0FjcWdBd0lCQWdJSWJqQ2hhajZDT2Iwd0RRWUpLb1pJaHZjTkFRRUxCUUF3RVRFUE1BMEdBMVVFCkF4TUdhbk5tZEhCa01DQVhEVEl3TURFd01UQXdNREF3TUZvWUR6azVPVGt4TWpNeE1qTTFPVFU1V2pBUk1ROHcKRFFZRFZRUURFd1pxYzJaMGNHUXdnZ0VpTUEwR0NTcUdTSWIzRFFFQkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDMwpNM2RZbTJyM2JUZHAzakZPcWlFYmZFcEJhaEdzVFBUN0N0Skd4cC80c0RqY2gzemhWQVRqTm1XRWRFUkd3ZHR3CkVZWEFZd3N2V0Z0WXlEdkhYNGRjbHJLcm11bXRaS0Jmd3hPbDloM3QxUG90QTdPK0FBd3ZCZ0duZTUxdWNmZVMKczhNK1RSdVowS3JyRVdXT0lQR1duTzZVZnRTT2lENE14WnVDSk9wZEovNUR4ZzVZcVZRVEV0YnJML0VUa0lkUgpMQjF2dlYwT3lNSWVpMXFKc3pkYTlrVzBidmFuOUNsbGxhWjkzN0VQVCs2RlhFeW1lTk8wcWFwbExTdXRqZS9rCmRQSzVrRFVGRFE5Umw2M3ZzcTU4bEg3cUppd0hqeUN4SGNyZnFETmZQYmZoWkM2VW1LcUxpN1B4bjNuL2paOXMKMUZQREtWQjZrOXhPZXdOdWdYZ0pBZ01CQUFHalBEQTZNQXdHQTFVZEV3RUIvd1FDTUFBd0hRWURWUjBPQkJZRQpGQkRRdzE4NC91Qk5zMHlxczVqaU92dnd4TFBTTUFzR0ExVWREd1FFQXdJRjREQU5CZ2txaGtpRzl3MEJBUXNGCkFBT0NBUUVBaWdSa0draEMxeTVMendOQ0N1T0I5eUsyS2NkUGJhcm9lZGlSWVVxZmpVU2JsT3NweWFTNjEvQjgKVk9UdHZSRjBxZkJFZTVxZVhVUTRIV1JGSnRVZmQ1eisvZTRZNkJHVmR3eFJ5aktIYkVGQ3NpOFlFZDNHOTdaZwpWM1RFV08xVVlCTlJhN2tZajE2QXFDOWtXaG5WRVU3bUdRWE5nR1NJaDNNTmx5RG1RblBIdHdzS2d3cUs5VWcvCk9QVUhUNGlTa2h2OEVoTjYyUFlRaHBEaU1udWFQbUZ1bGVKbmllQnNFMTlvSVBtbWsxblRIZXRPZDg4VU1PeUEKWDFKY0ZBZXI2dmVPQkxVMUhRSEdtd1Iyalgzai83YzI3SjJFdjRQWW1rU2R2N0FYcm5LaENDeGRSblA2WDlGaApTYlEwRHBhbW5zaWFEWld4QzNuUks2LzVndXdlOHc9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
   "base64"
@@ -126,13 +125,14 @@ const TlsDefaults: TlsOptions = {
   rejectUnauthorized: false,
 }
 
-const ConfigDefaults: ConfigOptions = Object.assign({
+const defaultBaseFolder = path.join(process.cwd(), "__ftproot__")
+const ConfigDefaults: ConfigOptions = {
   port: 21,
   securePort: 990,
   maxConnections: 10,
   minDataPort: 1024,
   basefolder: defaultBaseFolder,
-})
+}
 
 export function createFtpServer({
   cnf,
@@ -142,7 +142,10 @@ export function createFtpServer({
   ...options
 }: ConfigOptions & {
   cnf?: ConfigOptions
-} = {}) {
+  tls?: TlsOptions
+  hdl?: (options: UserCredential & { username: string }) => BackendHandlers
+  auth?: (options: AuthOptions) => AuthHandlers
+} = {}): EventEmitter & { start(): void; stop(): void; cleanup(): void } {
   let lastSessionKey = 0
   const openSessions: Map<number, Socket> = new Map()
 
@@ -150,15 +153,17 @@ export function createFtpServer({
       ...ConfigDefaults,
       ...cnf,
       ...options,
-      tls: { ...TlsDefaults, ...tlsConfig },
+      tls: {
+        ...TlsDefaults,
+        ...tlsConfig,
+      },
     },
     usingTLS = !!tlsConfig
 
   // the following methods may be overridden by dependency injection, not externalized due to close dependence on config options
   const { userLoginType, userAuthenticate }: AuthHandlers = Object.assign(
-    {},
-    basicAuth(config),
-    authBackend
+    configAuthBackend(config),
+    authBackend?.(config)
   )
 
   // checks
@@ -258,11 +263,7 @@ export function createFtpServer({
       fileStore,
       fileRename,
       fileSetTimes,
-    }: BackendHandlers = Object.assign(
-      {},
-      localFsBackend({ basefolder: config.basefolder }),
-      backend
-    )
+    }: BackendHandlers = localFsBackend({ basefolder: config.basefolder })
 
     let renameFile = ""
     let restOffset = 0
@@ -702,12 +703,10 @@ export function createFtpServer({
        *  MLSD
        *  NLST
        */
-      function LIST(
-        cmd: FolderListFormat /* , (TODO optional parameter) folder: string */
-      ) {
+      function LIST(cmd: FolderListFormat, folder: string) {
         openDataSocket()
           .then((socket) => {
-            folderList(cmd)
+            folderList(cmd, folder)
               .then((listing) => listing.join("\r\n"))
               .then((listing) => {
                 DebugHandler(
@@ -995,11 +994,15 @@ export function createFtpServer({
       }
     }
 
-    function setUserRights({ basefolder, ...permissions }: UserCredential) {
-      if (basefolder && !fs.existsSync(basefolder)) {
-        throw Object.assign(Error("user directory does not exist"), {
-          code: "ENOTDIR",
-        })
+    function setUserRights(credential: UserCredential) {
+      const { basefolder } = credential
+      if (basefolder && !backend && !fs.existsSync(basefolder)) {
+        throw Object.assign(
+          Error(`user basefolder [${basefolder}] does not exist`),
+          {
+            code: "ENOTDIR",
+          }
+        )
       }
 
       ;({
@@ -1024,10 +1027,15 @@ export function createFtpServer({
       } = Object.assign(
         {},
         localFsBackend({
-          basefolder: basefolder ?? config.basefolder,
+          basefolder: config.basefolder,
+          ...credential,
           username,
         }),
-        backend
+        backend?.({
+          basefolder: config.basefolder,
+          ...credential,
+          username,
+        })
       ))
       ;({
         allowUserFileCreate = false,
@@ -1037,7 +1045,8 @@ export function createFtpServer({
         allowUserFileRename = false,
         allowUserFolderDelete = false,
         allowUserFolderCreate = false,
-      } = permissions)
+      } = credential)
+
       renameFile = ""
       restOffset = 0
       authenticated = true

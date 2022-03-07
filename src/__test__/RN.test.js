@@ -171,12 +171,12 @@ test("test RNFR/RNTO message using handlers", async () => {
     .mockImplementationOnce(() => Promise.resolve(true))
   server = createServer({
     cnf: { port: 50021, user: users },
-    hdl: {
+    hdl: () => ({
       fileExists(file) {
         return Promise.resolve(file === "mytestfile")
       },
       fileRename,
-    },
+    }),
   })
   server.start()
 
@@ -217,12 +217,12 @@ test("test RNFR/RNTO message using handlers failing", async () => {
     .mockImplementationOnce(() => Promise.reject(Error("mock")))
   server = createServer({
     cnf: { port: 50021, user: users },
-    hdl: {
+    hdl: () => ({
       fileExists(file) {
         return Promise.resolve(file === "mytestfile")
       },
       fileRename,
-    },
+    }),
   })
   server.start()
 

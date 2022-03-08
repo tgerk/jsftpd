@@ -146,7 +146,9 @@ test("login with user settings", async () => {
     "331 Password required for michael"
   )
 
-  expect(await cmdSocket2.command("PASS myers").response()).toBe("230 Logged on")
+  expect(await cmdSocket2.command("PASS myers").response()).toBe(
+    "230 Logged on"
+  )
 
   await cmdSocket2.end()
   await cmdSocket.end()

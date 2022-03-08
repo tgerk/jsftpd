@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer } = require("../jsftpd.ts")
-const { getCmdPortTCP, getDataPort, formatPort, ExpectSocket } = require("./utils")
+const {
+  getCmdPortTCP,
+  getDataPort,
+  formatPort,
+  ExpectSocket,
+} = require("./utils")
 const path = require("path")
 
 jest.setTimeout(5000)
@@ -36,7 +41,9 @@ test("test null filename transformation", async () => {
     },
   ]
   server = createFtpServer({
-    port: cmdPortTCP, user: users, minDataPort: dataPort,
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
@@ -81,21 +88,22 @@ test("test outbound filename transformation", async () => {
       allowLoginWithoutPassword: true,
       allowUserFolderCreate: true,
       filenameTransform: {
-        in(file) {  // affects lookups
+        in(file) {
+          // affects lookups
           return file
         },
-        out(file) { // affects listings
+        out(file) {
+          // affects listings
           const { dir, base, name } = path.parse(file)
-          return path.join(
-            dir,
-            /^\d+.nc$/i.test(base) ? `O${name}` : base
-          )
+          return path.join(dir, /^\d+.nc$/i.test(base) ? `O${name}` : base)
         },
       },
     },
   ]
   server = createFtpServer({
-    port: cmdPortTCP, user: users, minDataPort: dataPort,
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
@@ -142,19 +150,23 @@ test("test inbound filename transformation", async () => {
       // filename transformation from SolidWorks form (at-rest) and DNC form (in-flight)
       // !!! files at-rest with DNC-formed names will be inaccessible !!!
       filenameTransform: {
-        in(file) {  // affects file references
+        in(file) {
+          // affects file references
           const { dir, base } = path.parse(file),
             dncForm = base.match(/^O(\d+$)/)
           return path.join(dir, dncForm ? `${dncForm[1]}.nc` : base)
         },
-        out(file) { // affects listings
+        out(file) {
+          // affects listings
           return file
         },
       },
     },
   ]
   server = createFtpServer({
-    port: cmdPortTCP, user: users, minDataPort: dataPort,
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 

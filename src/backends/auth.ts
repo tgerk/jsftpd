@@ -8,7 +8,8 @@ import {
   AuthOptions,
 } from "../jsftpd"
 
-const defaults: UserPermissions = { // TODO: construct by interation on values of enum userPermissions
+const defaults: UserPermissions = {
+  // TODO: construct by interation on values of enum userPermissions
   allowUserFileCreate: false,
   allowUserFileRetrieve: false,
   allowUserFileOverwrite: false,
@@ -29,7 +30,11 @@ function getAnonPermissions(permissions: AnonymousPermissions) {
   return credential
 }
 
-function getUserPermissions({ basefolder, filenameTransform, ...permissions }: UserCredential) {
+function getUserPermissions({
+  basefolder,
+  filenameTransform,
+  ...permissions
+}: UserCredential) {
   const credential: UserCredential = { ...defaults }
   if (basefolder) credential.basefolder = basefolder
   if (filenameTransform) credential.filenameTransform = filenameTransform

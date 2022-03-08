@@ -32,12 +32,16 @@ test("test RNFR message file does not exist", async () => {
     },
   ]
   server = createServer({
-    port: 50021, user: users, minDataPort: dataPort,
+    port: 50021,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe("220 Welcome")
+  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
   expect(await cmdSocket.command("USER john").response()).toBe(
     "232 User logged in"
@@ -46,8 +50,10 @@ test("test RNFR message file does not exist", async () => {
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
-  
-  expect(await cmdSocket.command("STOR mytestfile").response()).toBe("150 Awaiting passive connection")
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
   let dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
@@ -56,7 +62,9 @@ test("test RNFR message file does not exist", async () => {
     '226 Successfully transferred "mytestfile"'
   )
 
-  expect(await cmdSocket.command("RNFR myothertestfile").response()).toBe("550 File does not exist")
+  expect(await cmdSocket.command("RNFR myothertestfile").response()).toBe(
+    "550 File does not exist"
+  )
 
   await cmdSocket.end()
 })
@@ -71,20 +79,28 @@ test("test RNFR/RNTO message", async () => {
     },
   ]
   server = createServer({
-    port: 50021, user: users, minDataPort: dataPort,
+    port: 50021,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe("220 Welcome")
+  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
-  
-  expect(await cmdSocket.command("STOR mytestfile").response()).toBe("150 Awaiting passive connection")
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
   let dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
@@ -93,15 +109,21 @@ test("test RNFR/RNTO message", async () => {
     '226 Successfully transferred "mytestfile"'
   )
 
-  expect(await cmdSocket.command("RNFR /mytestfile").response()).toBe("350 File exists")
+  expect(await cmdSocket.command("RNFR /mytestfile").response()).toBe(
+    "350 File exists"
+  )
 
-  expect(await cmdSocket.command("RNTO /someotherfile").response()).toBe("250 File renamed successfully")
+  expect(await cmdSocket.command("RNTO /someotherfile").response()).toBe(
+    "250 File renamed successfully"
+  )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  expect(await cmdSocket.command("MLSD").response()).toMatch("150 Awaiting passive connection")
+  expect(await cmdSocket.command("MLSD").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
 
   dataSocket = new ExpectSocket()
   dataContent = await dataSocket.connect(dataPort, localhost).receive()
@@ -128,7 +150,8 @@ test("test RNFR/RNTO message using handlers", async () => {
     .fn()
     .mockImplementationOnce(() => Promise.resolve(true))
   server = createServer({
-    port: 50021, user: users,
+    port: 50021,
+    user: users,
     store: () => ({
       fileExists(file) {
         return Promise.resolve(file === "mytestfile")
@@ -139,13 +162,21 @@ test("test RNFR/RNTO message using handlers", async () => {
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe("220 Welcome")
+  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  expect(await cmdSocket.command("RNFR mytestfile").response()).toBe("350 File exists")
+  expect(await cmdSocket.command("RNFR mytestfile").response()).toBe(
+    "350 File exists"
+  )
 
-  expect(await cmdSocket.command("RNTO someotherfile").response()).toBe("250 File renamed successfully")
+  expect(await cmdSocket.command("RNTO someotherfile").response()).toBe(
+    "250 File renamed successfully"
+  )
 
   expect(fileRename).toBeCalledTimes(1)
   expect(fileRename).toHaveBeenCalledWith("mytestfile", "someotherfile")
@@ -165,7 +196,8 @@ test("test RNFR/RNTO message using handlers failing", async () => {
     .fn()
     .mockImplementationOnce(() => Promise.reject(Error("mock")))
   server = createServer({
-    port: 50021, user: users,
+    port: 50021,
+    user: users,
     store: () => ({
       fileExists(file) {
         return Promise.resolve(file === "mytestfile")
@@ -176,13 +208,21 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe("220 Welcome")
+  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  expect(await cmdSocket.command("RNFR mytestfile").response()).toBe("350 File exists")
+  expect(await cmdSocket.command("RNFR mytestfile").response()).toBe(
+    "350 File exists"
+  )
 
-  expect(await cmdSocket.command("RNTO someotherfile").response()).toBe("550 File rename failed")
+  expect(await cmdSocket.command("RNTO someotherfile").response()).toBe(
+    "550 File rename failed"
+  )
 
   expect(fileRename).toBeCalledTimes(1)
   expect(fileRename).toHaveBeenCalledWith("mytestfile", "someotherfile")
@@ -200,20 +240,28 @@ test("test RNFR/RNTO message file already exists", async () => {
     },
   ]
   server = createServer({
-    port: 50021, user: users, minDataPort: dataPort,
+    port: 50021,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe("220 Welcome")
+  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  expect(await cmdSocket.command("STOR mytestfile").response()).toBe("150 Awaiting passive connection")
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
   let dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
@@ -221,8 +269,10 @@ test("test RNFR/RNTO message file already exists", async () => {
   expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
-  
-  expect(await cmdSocket.command("STOR mytestfile2").response()).toBe("150 Awaiting passive connection")
+
+  expect(await cmdSocket.command("STOR mytestfile2").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
   dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost).send("OTHERTESTCONTENT")
@@ -231,9 +281,13 @@ test("test RNFR/RNTO message file already exists", async () => {
     '226 Successfully transferred "mytestfile2"'
   )
 
-  expect(await cmdSocket.command("RNFR /mytestfile").response()).toBe("350 File exists")
+  expect(await cmdSocket.command("RNFR /mytestfile").response()).toBe(
+    "350 File exists"
+  )
 
-  expect(await cmdSocket.command("RNTO mytestfile2").response()).toBe("550 File already exists")
+  expect(await cmdSocket.command("RNTO mytestfile2").response()).toBe(
+    "550 File already exists"
+  )
 
   await cmdSocket.end()
 })

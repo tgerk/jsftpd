@@ -65,5 +65,5 @@ module.exports = {
   getCmdPortTCP,
   getCmdPortTLS,
   getDataPort,
-  ExpectSocket
+  ExpectSocket,
 }

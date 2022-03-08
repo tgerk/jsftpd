@@ -37,7 +37,9 @@ test("test PASV message takes next free port", async () => {
     "220 Welcome"
   )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
   const passiveModeData = formatPort("127.0.0.1", cmdPortTCP + 1)
   expect(await cmdSocket.command("PASV").response()).toBe(
@@ -77,9 +79,13 @@ test("test PASV message fails port unavailable", async () => {
     "220 Welcome"
   )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  expect(await cmdSocket.command("PASV").response()).toBe("501 Passive command failed")
+  expect(await cmdSocket.command("PASV").response()).toBe(
+    "501 Passive command failed"
+  )
 
   await cmdSocket.end()
 })
@@ -104,9 +110,13 @@ test("test PASV message fails port range fails", async () => {
     "220 Welcome"
   )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  expect(await cmdSocket.command("PASV").response()).toBe("501 Passive command failed")
+  expect(await cmdSocket.command("PASV").response()).toBe(
+    "501 Passive command failed"
+  )
 
   await cmdSocket.end()
 })
@@ -131,7 +141,9 @@ test("test EPSV message takes next free port", async () => {
     "220 Welcome"
   )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${cmdPortTCP + 1}|)`
@@ -142,9 +154,7 @@ test("test EPSV message takes next free port", async () => {
   )
 
   let dataSocket = new ExpectSocket()
-  expect(
-    await dataSocket.connect(cmdPortTCP + 1, localhost).receive()
-  ).toBe("")
+  expect(await dataSocket.connect(cmdPortTCP + 1, localhost).receive()).toBe("")
   expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()
@@ -170,9 +180,13 @@ test("test EPSV message fails port unavailable", async () => {
     "220 Welcome"
   )
 
-  expect(await cmdSocket.command("USER john").response()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  expect(await cmdSocket.command("EPSV").response()).toBe("501 Extended passive command failed")
+  expect(await cmdSocket.command("EPSV").response()).toBe(
+    "501 Extended passive command failed"
+  )
 
   await cmdSocket.end()
 })

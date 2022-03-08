@@ -135,23 +135,20 @@ const ConfigDefaults: ConfigOptions = {
 }
 
 export function createFtpServer({
-  cnf,
   tls: tlsConfig,
   auth: authBackend,
-  hdl: backend,
+  store: storeBackend,
   ...options
 }: ConfigOptions & {
-  cnf?: ConfigOptions
   tls?: TlsOptions
-  hdl?: (options: UserCredential & { username: string }) => BackendHandlers
   auth?: (options: AuthOptions) => AuthHandlers
+  store?: (options: UserCredential & { username: string }) => BackendHandlers
 } = {}): EventEmitter & { start(): void; stop(): void; cleanup(): void } {
   let lastSessionKey = 0
   const openSessions: Map<number, Socket> = new Map()
 
   const config = {
       ...ConfigDefaults,
-      ...cnf,
       ...options,
       tls: {
         ...TlsDefaults,
@@ -167,7 +164,7 @@ export function createFtpServer({
   )
 
   // checks
-  if (!backend && !fs.existsSync(config.basefolder)) {
+  if (!storeBackend && !fs.existsSync(config.basefolder)) {
     if (config.basefolder === defaultBaseFolder) {
       fs.mkdirSync(defaultBaseFolder)
     } else {
@@ -196,15 +193,89 @@ export function createFtpServer({
     tlsServer.maxConnections = config.maxConnections
   }
 
+  const emitter = new EventEmitter()
+  return Object.assign(emitter, {
+    start() {
+      tcpServer.listen(config.port)
+      usingTLS && tlsServer.listen(config.securePort)
+    },
+
+    stop() {
+      for (const [key, session] of openSessions.entries()) {
+        session.destroy()
+        openSessions.delete(key)
+      }
+      tcpServer.close()
+      usingTLS && tlsServer.close()
+    },
+
+    cleanup() {
+      if (!storeBackend && config.basefolder === defaultBaseFolder) {
+        fs.rmSync(defaultBaseFolder, { force: true, recursive: true })
+      }
+    },
+  })
+
   function SessionHandler(cmdSocket: Socket | TLSSocket) {
     const socketKey = ++lastSessionKey
     openSessions.set(socketKey, cmdSocket)
+
+    let username = "nobody"
+    let authenticated = false
+    let allowUserFileCreate: boolean,
+      allowUserFileRetrieve: boolean,
+      allowUserFileOverwrite: boolean,
+      allowUserFileDelete: boolean,
+      allowUserFileRename: boolean,
+      allowUserFolderDelete: boolean,
+      allowUserFolderCreate: boolean
+
+    let resolveFolder: BackendHandlers["resolveFolder"],
+      resolveFile: BackendHandlers["resolveFile"],
+      setFolder: BackendHandlers["setFolder"],
+      getFolder: BackendHandlers["getFolder"],
+      folderExists: BackendHandlers["folderExists"],
+      folderDelete: BackendHandlers["folderDelete"],
+      folderCreate: BackendHandlers["folderCreate"],
+      folderList: BackendHandlers["folderList"],
+      fileExists: BackendHandlers["fileExists"],
+      fileSize: BackendHandlers["fileSize"],
+      fileDelete: BackendHandlers["fileDelete"],
+      fileRetrieve: BackendHandlers["fileRetrieve"],
+      fileStore: BackendHandlers["fileStore"],
+      fileRename: BackendHandlers["fileRename"],
+      fileSetTimes: BackendHandlers["fileSetTimes"]
+
+    let isEncrypted = "encrypted" in cmdSocket
+    let pbszReceived = false
+    let shouldProtect = false
+
+    let asciiOn = false
+    let renameFileFrom = ""
+    let dataOffset = 0
+
+    let dataAddr: string
+    let dataPort: number
+    let passivePort: net.Server
+    let pasvSocket = new Deferred<Socket | TLSSocket>()
+
+    cmdSocket.on("error", SessionErrorHandler)
+    cmdSocket.on("data", CmdHandler)
+    cmdSocket.on("close", () => {
+      openSessions.delete(socketKey)
+      DebugHandler(`${remoteInfo} FTP connection closed`)
+      if (passivePort) {
+        passivePort.close()
+      }
+    })
 
     const localAddr =
       cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown"
     const remoteAddr =
       cmdSocket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
     const remoteInfo = `[(${socketKey}) ${remoteAddr}:${cmdSocket.remotePort}]`
+    DebugHandler(`${remoteInfo} new FTP connection established`)
+
     function respond(
       this: Socket & {
         respond: (code: string, message: string, delimiter?: string) => void
@@ -217,69 +288,7 @@ export function createFtpServer({
       this.writable &&
         this.write(Buffer.from(`${code}${delimiter}${message}\r\n`))
     }
-
-    let isEncrypted = "encrypted" in cmdSocket
-    let pbszReceived = false
-    let shouldProtect = false
-
-    let asciiOn = false
-
-    let pasv = true
-    let pasvChannel: net.Server
-    let pasvSocket = new Deferred<Socket | TLSSocket>()
-
-    let actv = false
-    let addr: string
-    let port: number
-
-    let username = "nobody"
-    let authenticated = false
-    let {
-      allowUserFileCreate = false,
-      allowUserFileRetrieve = false,
-      allowUserFileOverwrite = false,
-      allowUserFileDelete = false,
-      allowUserFileRename = false,
-      allowUserFolderDelete = false,
-      allowUserFolderCreate = false,
-    }: UserPermissions = {}
-
-    let {
-      resolveFolder,
-      resolveFile,
-
-      setFolder,
-      getFolder,
-
-      folderExists,
-      folderDelete,
-      folderCreate,
-      folderList,
-
-      fileExists,
-      fileSize,
-      fileDelete,
-      fileRetrieve,
-      fileStore,
-      fileRename,
-      fileSetTimes,
-    }: BackendHandlers = localFsBackend({ basefolder: config.basefolder })
-
-    let renameFile = ""
-    let restOffset = 0
-
-    cmdSocket.on("error", SessionErrorHandler)
-    cmdSocket.on("data", CmdHandler)
-    cmdSocket.on("close", () => {
-      openSessions.delete(socketKey)
-      DebugHandler(`${remoteInfo} FTP connection closed`)
-      if (pasvChannel) {
-        pasvChannel.close()
-      }
-    })
-
     let client = Object.assign(cmdSocket, { respond })
-    DebugHandler(`${remoteInfo} new FTP connection established`)
     client.respond("220", "Welcome")
 
     function CmdHandler(data: string) {
@@ -479,15 +488,14 @@ export function createFtpServer({
        *  PORT
        */
       function PORT(cmd: string, arg: string) {
-        pasv = false
-        actv = false
+        passivePort = undefined
         const spec = arg.split(",")
         if (spec.length === 6) {
-          actv = true
-          addr = spec[0] + "." + spec[1] + "." + spec[2] + "." + spec[3]
-          port = parseInt(spec[4], 10) * 256 + parseInt(spec[5])
+          dataAddr = spec[0] + "." + spec[1] + "." + spec[2] + "." + spec[3]
+          dataPort = parseInt(spec[4], 10) * 256 + parseInt(spec[5])
           client.respond("200", "Port command successful")
         } else {
+          dataAddr = dataPort = undefined
           client.respond("501", "Port command failed")
         }
       }
@@ -496,11 +504,9 @@ export function createFtpServer({
        *  PASV
        */
       function PASV() {
-        pasv = false
-        actv = false
-        openPassiveChannel().then(
+        dataAddr = dataPort = undefined
+        initPasvSocket().then(
           (port) => {
-            pasv = true
             DebugHandler(
               `${remoteInfo} listening on ${port} for data connection`
             )
@@ -516,6 +522,7 @@ export function createFtpServer({
           },
           (error) => {
             DebugHandler(error)
+            passivePort = undefined
             client.respond("501", "Passive command failed")
           }
         )
@@ -525,15 +532,14 @@ export function createFtpServer({
        *  EPRT
        */
       function EPRT(cmd: string, arg: string) {
-        pasv = false
-        actv = false
+        passivePort = undefined
         const spec = arg.split("|")
         if (spec.length === 5) {
-          actv = true
-          addr = spec[2]
-          port = parseInt(spec[3], 10)
+          dataAddr = spec[2]
+          dataPort = parseInt(spec[3], 10)
           client.respond("200", "Extended Port command successful")
         } else {
+          dataAddr = dataPort = undefined
           client.respond("501", "Extended port command failed")
         }
       }
@@ -542,11 +548,9 @@ export function createFtpServer({
        *  EPSV
        */
       function EPSV() {
-        pasv = false
-        actv = false
-        openPassiveChannel().then(
+        dataAddr = dataPort = undefined
+        initPasvSocket().then(
           (port) => {
-            pasv = true
             DebugHandler(
               `${remoteInfo} listening on ${port} for data connection`
             )
@@ -555,7 +559,9 @@ export function createFtpServer({
               util.format("Entering extended passive mode (|||%d|)", port)
             )
           },
-          () => {
+          (error) => {
+            DebugHandler(error)
+            passivePort = undefined
             client.respond("501", "Extended passive command failed")
           }
         )
@@ -587,10 +593,10 @@ export function createFtpServer({
       function REST(cmd: string, arg: string) {
         const offset = parseInt(arg, 10)
         if (offset > -1) {
-          restOffset = offset
-          client.respond("350", `Restarting at ${restOffset}`)
+          dataOffset = offset
+          client.respond("350", `Restarting at ${dataOffset}`)
         } else {
-          restOffset = 0
+          dataOffset = 0
           client.respond("550", "Wrong restart offset")
         }
       }
@@ -801,7 +807,7 @@ export function createFtpServer({
                 } else {
                   openDataSocket()
                     .then((writeSocket) =>
-                      fileRetrieve(file, restOffset)
+                      fileRetrieve(file, dataOffset)
                         .then((readStream) => {
                           asciiOn && writeSocket.setEncoding("ascii")
                           readStream.on("error", (error) => {
@@ -829,7 +835,7 @@ export function createFtpServer({
                           readStream.pipe(writeSocket)
                         })
                         .finally(() => {
-                          restOffset = 0
+                          dataOffset = 0
                         })
                     )
                     .catch((error) => {
@@ -862,7 +868,7 @@ export function createFtpServer({
               } else {
                 openDataSocket()
                   .then((readSocket) => {
-                    fileStore(file, restOffset, asciiOn ? "ascii" : "binary")
+                    fileStore(file, dataOffset, asciiOn ? "ascii" : "binary")
                       .then((writeStream) => {
                         writeStream.on("error", (error) => {
                           // incomplete write
@@ -887,7 +893,7 @@ export function createFtpServer({
                         readSocket.pipe(writeStream)
                       })
                       .finally(() => {
-                        restOffset = 0
+                        dataOffset = 0
                       })
                   })
                   .catch((error) => {
@@ -915,7 +921,7 @@ export function createFtpServer({
               } else if (!allowUserFileRename) {
                 client.respond("550", "Permission denied")
               } else {
-                renameFile = file
+                renameFileFrom = file
                 client.respond("350", "File exists")
               }
             }),
@@ -939,7 +945,7 @@ export function createFtpServer({
                 if (isFile) {
                   client.respond("550", "File already exists")
                 } else {
-                  fileRename(renameFile, file)
+                  fileRename(renameFileFrom, file)
                     .then(
                       () => {
                         client.respond("250", "File renamed successfully")
@@ -950,7 +956,7 @@ export function createFtpServer({
                       }
                     )
                     .finally(() => {
-                      renameFile = ""
+                      renameFileFrom = ""
                     })
                 }
               }),
@@ -996,7 +1002,7 @@ export function createFtpServer({
 
     function setUserRights(credential: UserCredential) {
       const { basefolder } = credential
-      if (basefolder && !backend && !fs.existsSync(basefolder)) {
+      if (basefolder && !storeBackend && !fs.existsSync(basefolder)) {
         throw Object.assign(
           Error(`user basefolder [${basefolder}] does not exist`),
           {
@@ -1005,6 +1011,15 @@ export function createFtpServer({
         )
       }
 
+      ;({
+        allowUserFileCreate = false,
+        allowUserFileRetrieve = false,
+        allowUserFileOverwrite = false,
+        allowUserFileDelete = false,
+        allowUserFileRename = false,
+        allowUserFolderDelete = false,
+        allowUserFolderCreate = false,
+      } = credential)
       ;({
         resolveFolder,
         resolveFile,
@@ -1025,66 +1040,46 @@ export function createFtpServer({
         fileRename,
         fileSetTimes,
       } = Object.assign(
-        {},
         localFsBackend({
           basefolder: config.basefolder,
           ...credential,
           username,
         }),
-        backend?.({
+        storeBackend?.({
           basefolder: config.basefolder,
           ...credential,
           username,
         })
       ))
-      ;({
-        allowUserFileCreate = false,
-        allowUserFileRetrieve = false,
-        allowUserFileOverwrite = false,
-        allowUserFileDelete = false,
-        allowUserFileRename = false,
-        allowUserFolderDelete = false,
-        allowUserFolderCreate = false,
-      } = credential)
 
-      renameFile = ""
-      restOffset = 0
+      renameFileFrom = ""
+      dataOffset = 0
       authenticated = true
       return Promise.resolve()
     }
 
-    function openPassiveChannel() {
-      if (pasvChannel) {
-        pasvChannel.close()
+    function initPasvSocket() {
+      if (passivePort) {
+        passivePort.close()
         pasvSocket = new Deferred<Socket | TLSSocket>()
       }
 
-      function setupSocket(socket: Socket | TLSSocket) {
-        socket.on("error", SessionErrorHandler)
-        socket.on("close", () => {
-          pasvSocket = new Deferred<Socket | TLSSocket>()
-        })
-        // socket.on("data", (buf) => DebugHandler(buf.toString()))
-        pasvSocket.resolve(socket)
-      }
-
       if (isEncrypted && shouldProtect) {
-        pasvChannel = createSecureServer(config.tls)
-        pasvChannel.on("secureConnection", (socket) => {
+        passivePort = createSecureServer(config.tls)
+        passivePort.on("secureConnection", (socket) => {
           DebugHandler(`${remoteInfo} secure data connection established`)
           setupSocket(socket)
         })
       } else {
-        pasvChannel = createServer()
-        pasvChannel.on("error", ServerErrorHandler)
-        pasvChannel.on("connection", (socket) => {
+        passivePort = createServer()
+        passivePort.on("connection", (socket) => {
           if (isEncrypted && shouldProtect) {
             socket = new TLSSocket(socket, {
               isServer: true,
               secureContext: createSecureContext(config.tls),
             })
             socket.on("secure", () => {
-              DebugHandler(`${remoteInfo} data connection is secured`)
+              DebugHandler(`${remoteInfo} data connection is secure`)
               setupSocket(socket)
             })
           } else {
@@ -1093,70 +1088,86 @@ export function createFtpServer({
           }
         })
       }
-      pasvChannel.maxConnections = 1
-      return new Promise<number>((resolve, reject) => {
-        findAvailablePort().then((port) => {
-          pasvChannel?.listen(port, () => {
-            pasv = true
-            resolve((pasvChannel?.address() as AddressInfo).port)
-          })
-        }, reject)
-      })
-    }
 
-    function findAvailablePort() {
-      return new Promise<number>((resolve, reject) => {
-        const { minDataPort, maxConnections } = config
-        function checkListenPort(port: number) {
-          const server = createServer() // throwaway
-          server.once("error", function () {
-            if (port < minDataPort + maxConnections) {
-              checkListenPort(port + 1)
-            } else {
-              reject(Error("exceeded maxConnections"))
-            }
+      passivePort.maxConnections = 1
+      passivePort.on("error", ServerErrorHandler)
+      return findAvailablePort().then(
+        (port) =>
+          new Promise<AddressInfo["port"]>((resolve, reject) => {
+            passivePort.once("error", reject)
+            passivePort.listen(port, () => {
+              resolve((passivePort?.address() as AddressInfo).port)
+            })
           })
-          server.once("close", function () {
-            resolve(port)
-          })
-          server.listen(port, function () {
-            server.close()
-          })
-        }
-        if (minDataPort > 0 && minDataPort < 65535) {
-          checkListenPort(minDataPort)
-        } else {
-          reject(Error("minDataPort out-of-range 1-65535"))
-        }
-      })
-    }
+      )
 
-    function openDataSocket() {
-      return new Promise<Socket>((resolve, reject) => {
-        if (actv === true || pasv === true) {
-          client.respond("150", "Opening data channel")
-          if (actv === true) {
-            DebugHandler(
-              `${remoteInfo} openDataChannel isSecure[${isEncrypted}] protection[${shouldProtect}] addr[${addr}] port[${port}]`
-            )
-            let socket = net.connect(port, addr, () => {
-              if (isEncrypted && shouldProtect) {
-                socket = new TLSSocket(socket, {
-                  isServer: true,
-                  secureContext: createSecureContext(config.tls),
-                })
-                socket.on("secure", () => {
-                  DebugHandler(`${remoteInfo} data connection is secure`)
-                  resolve(socket) // data connection resolved
-                })
+      function setupSocket(socket: Socket | TLSSocket) {
+        socket.on("error", SessionErrorHandler)
+        socket.on("close", () => {
+          pasvSocket = new Deferred<Socket | TLSSocket>()
+        })
+
+        // socket.on("data", (buf) => DebugHandler(buf.toString()))
+        pasvSocket.resolve(socket)
+      }
+
+      function findAvailablePort() {
+        return new Promise<number>((resolve, reject) => {
+          const { minDataPort, maxConnections } = config
+          function checkListenPort(port: number) {
+            const server = createServer()
+            server.once("error", function () {
+              if (port >= minDataPort + maxConnections) {
+                reject(Error("exceeded maxConnections"))
               } else {
-                resolve(socket) // data connection resolved
+                checkListenPort(++port)
               }
             })
-            socket.on("error", DebugHandler)
-          } else {
-            resolve(pasvSocket)
+            server.once("close", function () {
+              resolve(port)
+            })
+
+            server.listen(port, function () {
+              server.close()
+            })
           }
+
+          if (minDataPort > 0 && minDataPort < 65535) {
+            checkListenPort(minDataPort)
+          } else {
+            reject(Error("minDataPort out-of-range 1-65535"))
+          }
+        })
+      }
+    }
+
+    function openDataSocket(): Promise<net.Socket> {
+      if (passivePort) {
+        client.respond("150", "Awaiting passive connection")
+        return pasvSocket
+      }
+
+      return new Promise<Socket>((resolve, reject) => {
+        if (dataAddr && dataPort) {
+          client.respond("150", "Opening data connection")
+          DebugHandler(
+            `${remoteInfo} connect to client data socket isSecure[${isEncrypted}] protection[${shouldProtect}] addr[${dataAddr}] port[${dataPort}]`
+          )
+          let socket = net.connect(dataPort, dataAddr, () => {
+            if (isEncrypted && shouldProtect) {
+              socket = new TLSSocket(socket, {
+                isServer: true,
+                secureContext: createSecureContext(config.tls),
+              })
+              socket.on("secure", () => {
+                DebugHandler(`${remoteInfo} data connection is secure`)
+                resolve(socket) // data connection resolved
+              })
+            } else {
+              resolve(socket) // data connection resolved
+            }
+          })
+          socket.on("error", DebugHandler)
         } else {
           reject(Error("active or passive mode not selected"))
         }
@@ -1195,8 +1206,6 @@ export function createFtpServer({
     }
   }
 
-  const emitter = new EventEmitter()
-
   function ListenHandler(protocol: string, address: string | AddressInfo) {
     emitter.emit("listen", {
       protocol,
@@ -1228,28 +1237,6 @@ export function createFtpServer({
       })}`
     )
   }
-
-  return Object.assign(emitter, {
-    start() {
-      tcpServer.listen(config.port)
-      usingTLS && tlsServer.listen(config.securePort)
-    },
-
-    stop() {
-      for (const [key, session] of openSessions.entries()) {
-        session.destroy()
-        openSessions.delete(key)
-      }
-      tcpServer.close()
-      usingTLS && tlsServer.close()
-    },
-
-    cleanup() {
-      if (!backend && config.basefolder === defaultBaseFolder) {
-        fs.rmSync(defaultBaseFolder, { force: true, recursive: true })
-      }
-    },
-  })
 }
 
 // time/date formatter utilities

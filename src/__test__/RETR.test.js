@@ -1,14 +1,10 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const net = require("net")
-const { PromiseSocket } = require("promise-socket")
-const { sleep, getCmdPortTCP, getDataPort } = require("./utils")
+const { getCmdPortTCP, getDataPort, ExpectSocket } = require("./utils")
 const { Readable, Writable } = require("stream")
 
 jest.setTimeout(5000)
-let server,
-  content,
-  dataContent = null
+let server
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
@@ -19,8 +15,6 @@ const cleanup = function () {
     server.cleanup()
     server = null
   }
-  content = ""
-  dataContent = ""
 }
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
@@ -35,48 +29,41 @@ test("test RETR message not allowed", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("RETR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe('550 Transfer failed "mytestfile"')
+  expect(await cmdSocket.command("RETR mytestfile").response()).toBe(
+    '550 Transfer failed "mytestfile"'
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RETR message", async () => {
@@ -89,66 +76,54 @@ test("test RETR message", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  promiseDataSocket = new PromiseSocket(new net.Socket())
-  dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
+    "550 File not found"
+  )
 
-  await promiseSocket.write("RETR /someotherfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 File not found")
+  expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("RETR mytestfile")
+  dataSocket = new ExpectSocket()
+  expect(await dataSocket.connect(dataPort, localhost).receive()).toMatch(
+    "SOMETESTCONTENT"
+  )
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toMatch("SOMETESTCONTENT")
-  await promiseDataSocket.end()
-
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch(
+  expect(await cmdSocket.response()).toMatch(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RETR message with ASCII", async () => {
@@ -161,78 +136,62 @@ test("test RETR message with ASCII", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("TYPE A")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Type set to ASCII")
+  expect(await cmdSocket.command("TYPE A").response()).toBe(
+    "200 Type set to ASCII"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  dataSocket.setEncoding("ascii")
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost, "ascii").send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  promiseDataSocket = new PromiseSocket(new net.Socket())
-  dataSocket = promiseDataSocket.stream
-  dataSocket.setEncoding("ascii")
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
+    "550 File not found"
+  )
 
-  await promiseSocket.write("RETR /someotherfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 File not found")
+  expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("RETR mytestfile")
+  dataSocket = new ExpectSocket()
+  expect(
+    await dataSocket.connect(dataPort, localhost, "ascii").receive()
+  ).toMatch("SOMETESTCONTENT")
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toMatch("SOMETESTCONTENT")
-  await promiseDataSocket.end()
-
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch(
+  expect(await cmdSocket.response()).toMatch(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RETR message with handler", async () => {
@@ -268,8 +227,10 @@ test("test RETR message with handler", async () => {
   )
 
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: () => ({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+    store: () => ({
       fileExists() {
         return Promise.resolve(doesFileExist)
       },
@@ -279,61 +240,46 @@ test("test RETR message with handler", async () => {
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  await cmdSocket.command("STOR mytestfile")
+  expect(await cmdSocket.response()).toBe("150 Awaiting passive connection")
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  promiseDataSocket = new PromiseSocket(new net.Socket())
-  dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  await cmdSocket.command("RETR mytestfile")
 
-  await promiseSocket.write("RETR mytestfile")
+  dataSocket = new ExpectSocket()
+  expect(await dataSocket.connect(dataPort, localhost).receive()).toMatch(
+    "SOMETESTCONTENT"
+  )
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toMatch("SOMETESTCONTENT")
-  await promiseDataSocket.end()
-
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch(
+  const response = await cmdSocket.response()
+  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch(
     '226 Successfully transferred "mytestfile"'
   )
 
   expect(fileStore).toBeCalledTimes(1)
   expect(fileRetrieve).toBeCalledTimes(1)
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RETR message with handler fails", async () => {
@@ -367,8 +313,10 @@ test("test RETR message with handler fails", async () => {
     )
   )
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: () => ({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+    store: () => ({
       fileExists() {
         return Promise.resolve(doesFileExist)
       },
@@ -378,65 +326,48 @@ test("test RETR message with handler fails", async () => {
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  promiseDataSocket = new PromiseSocket(new net.Socket())
-  dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  await cmdSocket.command("RETR mytestfile")
 
-  await promiseSocket.write("RETR mytestfile")
+  dataSocket = new ExpectSocket()
+  const data = await dataSocket.connect(dataPort, localhost).receive()
+  expect(data).toBe(undefined)
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent).toBe(undefined)
-  await promiseDataSocket.end()
-
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch('550 Transfer failed "mytestfile"')
+  const response = await cmdSocket.response()
+  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch('550 Transfer failed "mytestfile"')
 
   expect(fileStore).toBeCalledTimes(1)
   expect(fileRetrieve).toBeCalledTimes(1)
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RETR message no active or passive mode", async () => {
@@ -448,8 +379,9 @@ test("test RETR message no active or passive mode", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users },
-    hdl: () => ({
+    port: cmdPortTCP,
+    user: users,
+    store: () => ({
       fileExists() {
         return Promise.resolve(true)
       },
@@ -457,25 +389,24 @@ test("test RETR message no active or passive mode", async () => {
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("PORT WRONG")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("501 Port command failed")
+  expect(await cmdSocket.command("PORT WRONG").response()).toBe(
+    "501 Port command failed"
+  )
 
   server._useHdl = true
 
-  await promiseSocket.write("RETR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("501 Command failed")
+  expect(await cmdSocket.command("RETR mytestfile").response()).toBe(
+    "501 Command failed"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })

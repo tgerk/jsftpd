@@ -1,20 +1,18 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer: createServer } = require("../jsftpd.ts")
+const { createFtpServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
 const { PromiseSocket } = require("promise-socket")
 const {
-  sleep,
   getCmdPortTCP,
   getCmdPortTLS,
   getDataPort,
   formatPort,
+  ExpectSocket,
 } = require("./utils")
 
 jest.setTimeout(5000)
-let server,
-  content,
-  dataContent = null
+let server
 const cmdPortTCP = getCmdPortTCP()
 const cmdPortTLS = getCmdPortTLS()
 const dataPort = getDataPort()
@@ -26,14 +24,12 @@ const cleanup = function () {
     server.cleanup()
     server = null
   }
-  content = ""
-  dataContent = ""
 }
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
 test("create ftpd instance without options created with default values", async () => {
-  server = createServer()
+  server = createFtpServer()
   /* Bad checks:  "show, don't tell" principle means to test the effects & behavior of a server created with all defaults
       an adequate implementation can behave identically, regardless of inspection of internal data structures
     expect(server._opt.cnf.allowAnonymousFileDelete).toBeFalsy()
@@ -53,32 +49,28 @@ test("create ftpd instance without options created with default values", async (
 
   {
     // expect(server._opt.cnf.port).toBe(21)
-    const promiseSocket = new PromiseSocket(new net.Socket())
-    const socket = promiseSocket.stream
-
-    await socket.connect(21, localhost)
-    content = await promiseSocket.read()
-    expect(content.toString().trim()).toBe("220 Welcome")
+    const cmdSocket = new ExpectSocket()
+    expect(await cmdSocket.connect(21, localhost).response()).toBe(
+      "220 Welcome"
+    )
 
     expect(handler).toBeCalledTimes(1)
 
-    await promiseSocket.end()
+    await cmdSocket.end()
   }
 
   // expect(server._opt.cnf.securePort).toBe(990)
   expect(async () => {
-    const promiseSocket = new PromiseSocket(new tls.TLSSocket())
-    const socket = promiseSocket.stream
-
-    await socket.connect(990, localhost)
-    content = await promiseSocket.read()
+    const cmdSocket = new ExpectSocket(new tls.TLSSocket())
+    await cmdSocket.connect(990, localhost).response()
   }).rejects.toThrow("ECONNREFUSED")
 })
 
 test("ftp server can be started on non default ports", async () => {
-  server = createServer({
+  server = createFtpServer({
+    port: cmdPortTCP + 2,
+    securePort: cmdPortTLS + 2,
     tls: { rejectUnauthorized: false },
-    cnf: { port: cmdPortTCP + 2, securePort: cmdPortTLS + 2 },
   })
   // expect(server._opt.cnf.port).toBe(cmdPortTCP)
   // expect(server._opt.cnf.securePort).toBe(cmdPortTLS)
@@ -88,21 +80,19 @@ test("ftp server can be started on non default ports", async () => {
   const handler = jest.fn()
   server.on("listen", handler)
 
-  const promiseSocket = new PromiseSocket(new net.Socket())
-  const socket = promiseSocket.stream
-
-  await socket.connect(cmdPortTCP + 2, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  const cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP + 2, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
   expect(handler).toBeCalledTimes(2)
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("ftp server fails when basefolder does not exist", () => {
   try {
-    server = createServer({ cnf: { basefolder: "/NOTEXISTING" } })
+    server = createFtpServer({ basefolder: "/NOTEXISTING" })
   } catch (err) {
     expect(err.message).toMatch("Basefolder must exist")
   }
@@ -115,24 +105,23 @@ test("test unknown message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("SOMETHING")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("500 Command not implemented")
+  expect(await cmdSocket.command("SOMETHING").response()).toBe(
+    "500 Command not implemented"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test CLNT message", async () => {
@@ -142,24 +131,23 @@ test("test CLNT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("CLNT tests")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Don't care")
+  expect(await cmdSocket.command("CLNT tests").response()).toBe(
+    "200 Don't care"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test SYST message", async () => {
@@ -169,24 +157,21 @@ test("test SYST message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("SYST")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("215 UNIX")
+  expect(await cmdSocket.command("SYST").response()).toBe("215 UNIX")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test FEAT message", async () => {
@@ -196,24 +181,21 @@ test("test FEAT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("FEAT")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("211-Features")
+  expect(await cmdSocket.command("FEAT").response()).toMatch("211-Features")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test PWD message", async () => {
@@ -223,24 +205,23 @@ test("test PWD message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("PWD")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe('257 "/" is current directory')
+  expect(await cmdSocket.command("PWD").response()).toBe(
+    '257 "/" is current directory'
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test QUIT message", async () => {
@@ -250,24 +231,21 @@ test("test QUIT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("QUIT")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("221 Goodbye")
+  expect(await cmdSocket.command("QUIT").response()).toBe("221 Goodbye")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test PBSZ message", async () => {
@@ -277,24 +255,21 @@ test("test PBSZ message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("PBSZ 0")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 PBSZ=0")
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test TYPE message", async () => {
@@ -304,28 +279,27 @@ test("test TYPE message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("TYPE A")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Type set to ASCII")
+  expect(await cmdSocket.command("TYPE A").response()).toBe(
+    "200 Type set to ASCII"
+  )
 
-  await promiseSocket.write("TYPE")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Type set to BINARY")
+  expect(await cmdSocket.command("TYPE").response()).toBe(
+    "200 Type set to BINARY"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test OPTS message", async () => {
@@ -335,32 +309,29 @@ test("test OPTS message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("OPTS UTF8 ON")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 UTF8 ON")
+  expect(await cmdSocket.command("OPTS UTF8 ON").response()).toBe("200 UTF8 ON")
 
-  await promiseSocket.write("OPTS UTF8 OFF")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 UTF8 OFF")
+  expect(await cmdSocket.command("OPTS UTF8 OFF").response()).toBe(
+    "200 UTF8 OFF"
+  )
 
-  await promiseSocket.write("OPTS SOMETHING")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("451 Not supported")
+  expect(await cmdSocket.command("OPTS SOMETHING").response()).toBe(
+    "451 Not supported"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test PROT message", async () => {
@@ -370,40 +341,35 @@ test("test PROT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("PROT C")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("503 PBSZ missing")
+  expect(await cmdSocket.command("PROT C").response()).toBe("503 PBSZ missing")
 
-  await promiseSocket.write("PBSZ 0")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 PBSZ=0")
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
 
-  await promiseSocket.write("PROT C")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Protection level is C")
+  expect(await cmdSocket.command("PROT C").response()).toBe(
+    "200 Protection level is C"
+  )
 
-  await promiseSocket.write("PROT P")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Protection level is P")
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
 
-  await promiseSocket.write("PROT Z")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("534 Protection level must be C or P")
+  expect(await cmdSocket.command("PROT Z").response()).toBe(
+    "534 Protection level must be C or P"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test REST message", async () => {
@@ -413,28 +379,27 @@ test("test REST message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("REST 0")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("350 Restarting at 0")
+  expect(await cmdSocket.command("REST 0").response()).toBe(
+    "350 Restarting at 0"
+  )
 
-  await promiseSocket.write("REST -1")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Wrong restart offset")
+  expect(await cmdSocket.command("REST -1").response()).toBe(
+    "550 Wrong restart offset"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MKD message", async () => {
@@ -445,28 +410,27 @@ test("test MKD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john/paul/ringo/george")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john/paul/ringo/george").response()).toBe(
+    "250 Folder created successfully"
+  )
 
-  await promiseSocket.write("MKD /john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Folder exists")
+  expect(await cmdSocket.command("MKD /john").response()).toBe(
+    "550 Folder exists"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MKD message cannot create folder without permission", async () => {
@@ -477,24 +441,23 @@ test("test MKD message cannot create folder without permission", async () => {
       allowUserFolderCreate: false,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Permission denied")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "550 Permission denied"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RMD message", async () => {
@@ -506,32 +469,31 @@ test("test RMD message", async () => {
       allowUserFolderDelete: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
-  await promiseSocket.write("RMD /pete")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Folder not found")
+  expect(await cmdSocket.command("RMD /pete").response()).toBe(
+    "550 Folder not found"
+  )
 
-  await promiseSocket.write("RMD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder deleted successfully")
+  expect(await cmdSocket.command("RMD john").response()).toBe(
+    "250 Folder deleted successfully"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test RMD message cannot delete folder without permission", async () => {
@@ -543,28 +505,27 @@ test("test RMD message cannot delete folder without permission", async () => {
       allowUserFolderDelete: false,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
-  await promiseSocket.write("RMD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Permission denied")
+  expect(await cmdSocket.command("RMD john").response()).toBe(
+    "550 Permission denied"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test CWD message", async () => {
@@ -575,52 +536,43 @@ test("test CWD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
-  await promiseSocket.write("CWD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("CWD john").response()).toBe(
     '250 CWD successful. "/john" is current directory'
   )
 
-  await promiseSocket.write("CWD /john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("CWD /john").response()).toBe(
     '250 CWD successful. "/john" is current directory'
   )
 
-  await promiseSocket.write("CWD ..")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("CWD ..").response()).toBe(
     '250 CWD successful. "/" is current directory'
   )
 
-  await promiseSocket.write("CWD ..")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("CWD ..").response()).toBe(
     '250 CWD successful. "/" is current directory'
   )
 
-  await promiseSocket.write("CWD false")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Folder not found")
+  expect(await cmdSocket.command("CWD false").response()).toBe(
+    "550 Folder not found"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MFMT message", async () => {
@@ -631,75 +583,59 @@ test("test MFMT message", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("MFMT 20150215120000 mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("253 Date/time changed okay")
+  expect(
+    await cmdSocket.command("MFMT 20150215120000 mytestfile").response()
+  ).toBe("253 Date/time changed okay")
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  promiseDataSocket = new PromiseSocket(new net.Socket())
-  dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("MLSD").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("MLSD")
-  content = await promiseSocket.read()
+  dataSocket = new ExpectSocket()
+  const data = await dataSocket.connect(dataPort, localhost).receive()
+  expect(data.toString().trim()).toMatch("type=file")
+  expect(data.toString().trim()).toMatch("modify=20150215")
+  expect(data.toString().trim()).toMatch("size=15")
+  expect(data.toString().trim()).toMatch("mytestfile")
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toMatch("type=file")
-  expect(dataContent.toString().trim()).toMatch("modify=20150215")
-  expect(dataContent.toString().trim()).toMatch("size=15")
-  expect(dataContent.toString().trim()).toMatch("mytestfile")
-  await promiseDataSocket.end()
+  expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
 
-  await sleep(100)
-
-  content += await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch('226 Successfully transferred "/"')
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MFMT message with handler", async () => {
@@ -709,9 +645,10 @@ test("test MFMT message with handler", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users },
-    hdl: () => ({
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    store: () => ({
       fileExists() {
         return Promise.resolve(true)
       },
@@ -722,21 +659,20 @@ test("test MFMT message with handler", async () => {
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MFMT 2022020220202202 mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("253 Date/time changed okay")
+  expect(
+    await cmdSocket.command("MFMT 2022020220202202 mytestfile").response()
+  ).toBe("253 Date/time changed okay")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MFMT message file does not exist", async () => {
@@ -749,49 +685,42 @@ test("test MFMT message file does not exist", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("MFMT 20150215120000 /someotherfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 File does not exist")
+  expect(
+    await cmdSocket.command("MFMT 20150215120000 /someotherfile").response()
+  ).toBe("550 File does not exist")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test DELE message without permission", async () => {
@@ -803,49 +732,42 @@ test("test DELE message without permission", async () => {
       allowUserFileDelete: false,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("DELE mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 Permission denied")
+  expect(await cmdSocket.command("DELE mytestfile").response()).toBe(
+    "550 Permission denied"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test DELE message relative path", async () => {
@@ -857,53 +779,45 @@ test("test DELE message relative path", async () => {
       allowUserFileDelete: true,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
-
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
-
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
-    `229 Entering extended passive mode (|||${dataPort}|)`
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  expect(await cmdSocket.command("EPSV").response()).toBe(
+    `229 Entering extended passive mode (|||${dataPort}|)`
+  )
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("DELE someotherfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 File not found")
+  expect(await cmdSocket.command("DELE someotherfile").response()).toBe(
+    "550 File not found"
+  )
 
-  await promiseSocket.write("DELE mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 File deleted successfully")
+  expect(await cmdSocket.command("DELE mytestfile").response()).toBe(
+    "250 File deleted successfully"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test DELE message absolute path", async () => {
@@ -915,49 +829,42 @@ test("test DELE message absolute path", async () => {
       allowUserFileDelete: true,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("DELE /mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 File deleted successfully")
+  expect(await cmdSocket.command("DELE /mytestfile").response()).toBe(
+    "250 File deleted successfully"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test SIZE message", async () => {
@@ -968,57 +875,46 @@ test("test SIZE message", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("150 Opening data channel")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.write("SIZE /myfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("550 File not found")
+  expect(await cmdSocket.command("SIZE /myfile").response()).toBe(
+    "550 File not found"
+  )
 
-  await promiseSocket.write("SIZE /mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("213 15")
+  expect(await cmdSocket.command("SIZE /mytestfile").response()).toBe("213 15")
 
-  await promiseSocket.write("SIZE mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("213 15")
+  expect(await cmdSocket.command("SIZE mytestfile").response()).toBe("213 15")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test AUTH message", async () => {
@@ -1028,34 +924,33 @@ test("test AUTH message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("AUTH NONE")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("504 Unsupported auth type NONE")
+  expect(await cmdSocket.command("AUTH NONE").response()).toBe(
+    "504 Unsupported auth type NONE"
+  )
 
-  await promiseSocket.write("AUTH TLS")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("234 Using authentication type TLS")
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
 
-  promiseSocket = new PromiseSocket(
-    new tls.connect({ socket: socket, rejectUnauthorized: false })
+  cmdSocket = new ExpectSocket(
+    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false })
   )
   // eslint-disable-next-line @typescript-eslint/no-empty-function
-  await promiseSocket.stream.once("secureConnect", function () {})
+  cmdSocket.stream.once("secureConnect", function () {})
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test PORT message", async () => {
@@ -1066,42 +961,41 @@ test("test PORT message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
   const dataServer = net.createServer()
-  let promiseDataSocket = new PromiseSocket(dataServer)
-  await promiseDataSocket.stream.listen(dataPort, "127.0.0.1")
+  let dataSocket = new PromiseSocket(dataServer)
+  await dataSocket.stream.listen(dataPort, "127.0.0.1")
 
-  await promiseSocket.write("PORT something")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("501 Port command failed")
+  expect(await cmdSocket.command("PORT something").response()).toBe(
+    "501 Port command failed"
+  )
 
   const portData = formatPort("127.0.0.1", dataPort)
-  await promiseSocket.write(`PORT ${portData}`)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Port command successful")
+  expect(await cmdSocket.command(`PORT ${portData}`).response()).toBe(
+    "200 Port command successful"
+  )
 
-  await promiseSocket.write("MLSD")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
+  expect(await cmdSocket.command("MLSD").response()).toMatch(
+    "150 Opening data connection"
+  )
 
-  await promiseDataSocket.stream.close()
-  await promiseSocket.end()
+  await dataSocket.stream.close()
+  await cmdSocket.end()
 })
 
 test("test EPRT message", async () => {
@@ -1112,39 +1006,38 @@ test("test EPRT message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
   const dataServer = net.createServer()
-  let promiseDataSocket = new PromiseSocket(dataServer)
-  await promiseDataSocket.stream.listen(dataPort, "127.0.0.1")
+  let dataSocket = new PromiseSocket(dataServer)
+  await dataSocket.stream.listen(dataPort, "127.0.0.1")
 
-  await promiseSocket.write("EPRT something")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("501 Extended port command failed")
+  expect(await cmdSocket.command("EPRT something").response()).toBe(
+    "501 Extended port command failed"
+  )
 
-  await promiseSocket.write(`EPRT ||127.0.0.1|${dataPort}|`)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Extended Port command successful")
+  expect(
+    await cmdSocket.command(`EPRT ||127.0.0.1|${dataPort}|`).response()
+  ).toBe("200 Extended Port command successful")
 
-  await promiseSocket.write("MLSD")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
+  expect(await cmdSocket.command("MLSD").response()).toMatch(
+    "150 Opening data connection"
+  )
 
-  await promiseDataSocket.stream.close()
-  await promiseSocket.end()
+  await dataSocket.stream.close()
+  await cmdSocket.end()
 })

@@ -1,11 +1,9 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const net = require("net")
-const { PromiseSocket } = require("promise-socket")
-const { getCmdPortTCP } = require("./utils")
+const { getCmdPortTCP, ExpectSocket } = require("./utils")
 
 jest.setTimeout(5000)
-let server, content
+let server
 const cmdPortTCP = getCmdPortTCP()
 const localhost = "127.0.0.1"
 
@@ -15,115 +13,103 @@ const cleanup = function () {
     server.cleanup()
     server = null
   }
-  content = ""
 }
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
 test("error message when not logged in", async () => {
-  server = createServer({ cnf: { port: cmdPortTCP } })
+  server = createServer({ port: cmdPortTCP })
   server.start()
 
-  const promiseSocket = new PromiseSocket(new net.Socket())
-  const socket = promiseSocket.stream
+  const cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
-  await promiseSocket.write("FEAT")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("530 Not logged in")
+  expect(await cmdSocket.command("FEAT").response()).toBe("530 Not logged in")
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login as anonymous not allowed by default", async () => {
-  server = createServer({ cnf: { port: cmdPortTCP } })
+  server = createServer({ port: cmdPortTCP })
   server.start()
 
-  const promiseSocket = new PromiseSocket(new net.Socket())
-  const socket = promiseSocket.stream
+  const cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
-  await promiseSocket.write("USER anonymous")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("530 Not logged in")
+  expect(await cmdSocket.command("USER anonymous").response()).toBe(
+    "530 Not logged in"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login as anonymous when enabled", async () => {
   server = createServer({
-    cnf: { port: cmdPortTCP, allowAnonymousLogin: true },
+    port: cmdPortTCP,
+    allowAnonymousLogin: true,
   })
   server.start()
 
-  const promiseSocket = new PromiseSocket(new net.Socket())
-  const socket = promiseSocket.stream
+  const cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  expect(await cmdSocket.command("USER anonymous").response()).toBe(
+    "331 Password required for anonymous"
+  )
 
-  await promiseSocket.write("USER anonymous")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("331 Password required for anonymous")
+  expect(await cmdSocket.command("PASS anonymous@anonymous").response()).toBe(
+    "230 Logged on"
+  )
 
-  await promiseSocket.write("PASS anonymous@anonymous")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("230 Logged on")
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login with default user settings", async () => {
   server = createServer({
-    cnf: { port: cmdPortTCP, username: "john", password: "doe" },
+    port: cmdPortTCP,
+    username: "john",
+    password: "doe",
   })
   server.start()
 
-  const promiseSocket = new PromiseSocket(new net.Socket())
-  const socket = promiseSocket.stream
+  const cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "331 Password required for john"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("331 Password required for john")
+  expect(await cmdSocket.command("PASS doe").response()).toBe("230 Logged on")
 
-  await promiseSocket.write("PASS doe")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("230 Logged on")
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login with default user settings without password allowed", async () => {
   server = createServer({
-    cnf: {
-      port: cmdPortTCP,
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
+    port: cmdPortTCP,
+    username: "john",
+    allowLoginWithoutPassword: true,
   })
   server.start()
 
-  const promiseSocket = new PromiseSocket(new net.Socket())
-  const socket = promiseSocket.stream
+  const cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login with user settings", async () => {
@@ -137,40 +123,33 @@ test("login with user settings", async () => {
       password: "myers",
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("331 Password required for john")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "331 Password required for john"
+  )
 
-  await promiseSocket.write("PASS doe")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("230 Logged on")
+  expect(await cmdSocket.command("PASS doe").response()).toBe("230 Logged on")
 
-  await promiseSocket.end()
+  const cmdSocket2 = new ExpectSocket()
+  expect(await cmdSocket2.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  promiseSocket = new PromiseSocket(new net.Socket())
-  socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  expect(await cmdSocket2.command("USER michael").response()).toBe(
+    "331 Password required for michael"
+  )
 
-  await promiseSocket.write("USER michael")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("331 Password required for michael")
+  expect(await cmdSocket2.command("PASS myers").response()).toBe("230 Logged on")
 
-  await promiseSocket.write("PASS myers")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("230 Logged on")
-
-  await promiseSocket.end()
+  await cmdSocket2.end()
+  await cmdSocket.end()
 })
 
 test("login with user settings without password allowed", async () => {
@@ -184,32 +163,30 @@ test("login with user settings without password allowed", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 
-  promiseSocket = new PromiseSocket(new net.Socket())
-  socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER michael")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER michael").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login with user settings and wrong user rejected", async () => {
@@ -219,20 +196,19 @@ test("login with user settings and wrong user rejected", async () => {
       password: "doe",
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER michael")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("530 Not logged in")
+  expect(await cmdSocket.command("USER michael").response()).toBe(
+    "530 Not logged in"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("login with user settings and wrong password rejected", async () => {
@@ -242,22 +218,21 @@ test("login with user settings and wrong password rejected", async () => {
       password: "doe",
     },
   ]
-  server = createServer({ cnf: { port: cmdPortTCP, user: users } })
+  server = createServer({ port: cmdPortTCP, user: users })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  await socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("331 Password required for john")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "331 Password required for john"
+  )
 
-  await promiseSocket.write("PASS pass")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("530 Username or password incorrect")
+  expect(await cmdSocket.command("PASS pass").response()).toBe(
+    "530 Username or password incorrect"
+  )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })

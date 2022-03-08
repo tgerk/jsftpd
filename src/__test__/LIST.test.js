@@ -3,12 +3,15 @@ const { createFtpServer: createServer } = require("../jsftpd.ts")
 const net = require("net")
 const tls = require("tls")
 const { PromiseSocket } = require("promise-socket")
-const { sleep, getCmdPortTCP, getDataPort, formatPort } = require("./utils")
+const {
+  getCmdPortTCP,
+  getDataPort,
+  formatPort,
+  ExpectSocket,
+} = require("./utils")
 
 jest.setTimeout(5000)
-let server,
-  content,
-  dataContent = null
+let server = null
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
@@ -19,8 +22,6 @@ const cleanup = function () {
     server.cleanup()
     server = null
   }
-  content = ""
-  dataContent = ""
 }
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
@@ -34,49 +35,42 @@ test("test LIST message", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
   const passiveModeData = formatPort("127.0.0.1", dataPort)
-  await promiseSocket.write("PASV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("PASV").response()).toBe(
     `227 Entering passive mode (${passiveModeData})`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  dataSocket.connect(dataPort, localhost)
+  await cmdSocket.command("LIST")
 
-  await promiseSocket.write("LIST")
+  let dataSocket = new ExpectSocket()
+  const data = await dataSocket.connect(dataPort, localhost).receive()
+  expect(data).toMatch("dr--r--r--")
+  expect(data).toMatch("john john")
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toMatch("dr--r--r--")
-  expect(dataContent.toString().trim()).toMatch("john john")
-  await promiseDataSocket.end()
+  const response = await cmdSocket.response()
+  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch('226 Successfully transferred "/"')
 
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch('226 Successfully transferred "/"')
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MLSD message", async () => {
@@ -88,48 +82,41 @@ test("test MLSD message", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("MKD john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("250 Folder created successfully")
+  expect(await cmdSocket.command("MKD john").response()).toBe(
+    "250 Folder created successfully"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  dataSocket.connect(dataPort, localhost)
+  await cmdSocket.command("MLSD")
 
-  await promiseSocket.write("MLSD")
+  let dataSocket = new ExpectSocket()
+  const data = await dataSocket.connect(dataPort, localhost).receive()
+  expect(data).toMatch("type=dir")
+  expect(data).toMatch("john")
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toMatch("type=dir")
-  expect(dataContent.toString().trim()).toMatch("john")
-  await promiseDataSocket.end()
+  const response = await cmdSocket.response()
+  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch('226 Successfully transferred "/"')
 
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch('226 Successfully transferred "/"')
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MLSD message over secure connection", async () => {
@@ -141,69 +128,62 @@ test("test MLSD message over secure connection", async () => {
     },
   ]
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
   })
   server.start()
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("AUTH NONE")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("504 Unsupported auth type NONE")
+  expect(await cmdSocket.command("AUTH NONE").response()).toBe(
+    "504 Unsupported auth type NONE"
+  )
 
-  await promiseSocket.write("AUTH TLS")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("234 Using authentication type TLS")
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
 
-  promiseSocket = new PromiseSocket(
-    new tls.connect({ socket: socket, rejectUnauthorized: false })
+  cmdSocket = new ExpectSocket(
+    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false })
   )
   // eslint-disable-next-line @typescript-eslint/no-empty-function
-  promiseSocket.stream.once("secureConnect", function () {})
+  cmdSocket.stream.once("secureConnect", function () {})
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("PBSZ 0")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 PBSZ=0")
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
 
-  await promiseSocket.write("PROT P")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("200 Protection level is P")
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(
+  let dataSocket = new ExpectSocket(
     new tls.connect(dataPort, localhost, { rejectUnauthorized: false })
   )
-  let dataSocket = promiseDataSocket.stream
   // eslint-disable-next-line @typescript-eslint/no-empty-function
-  await dataSocket.once("secureConnect", function () {})
+  await dataSocket.stream.once("secureConnect", function () {})
 
-  await promiseSocket.write("STOR mytestfile")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
+  expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
 
-  await promiseDataSocket.write("SOMETESTCONTENT")
-  dataSocket.end()
-  await promiseDataSocket.end()
+  await dataSocket.send("SOMETESTCONTENT")
 
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch(
+  expect(await cmdSocket.response()).toMatch(
     '226 Successfully transferred "mytestfile"'
   )
 
-  await promiseSocket.end()
+  await cmdSocket.end()
 })
 
 test("test MLSD message with handler", async () => {
@@ -216,44 +196,34 @@ test("test MLSD message with handler", async () => {
   ]
   const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
   server = createServer({
-    cnf: { port: cmdPortTCP, user: users, minDataPort: dataPort },
-    hdl: () => ({ folderList }),
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+    store: () => ({ folderList }),
   })
   server.start()
-  server.on("log", console.info)
-  server.on("debug", console.debug)
 
-  let promiseSocket = new PromiseSocket(new net.Socket())
-  let socket = promiseSocket.stream
-  socket.connect(cmdPortTCP, localhost)
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("220 Welcome")
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
 
-  await promiseSocket.write("USER john")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe("232 User logged in")
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
 
-  await promiseSocket.write("EPSV")
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toBe(
+  expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let promiseDataSocket = new PromiseSocket(new net.Socket())
-  let dataSocket = promiseDataSocket.stream
-  dataSocket.connect(dataPort, localhost)
+  await cmdSocket.write("MLSD")
 
-  await promiseSocket.write("MLSD")
+  let dataSocket = new ExpectSocket()
+  expect(await dataSocket.connect(dataPort, localhost).receive()).toBe("")
 
-  dataContent = await promiseDataSocket.read()
-  expect(dataContent.toString().trim()).toBe("")
-  await promiseDataSocket.end()
+  const response = await cmdSocket.response()
+  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch('226 Successfully transferred "/"')
 
-  await sleep(100)
-
-  content = await promiseSocket.read()
-  expect(content.toString().trim()).toMatch("150 Opening data channel")
-  expect(content.toString().trim()).toMatch('226 Successfully transferred "/"')
-
-  await promiseSocket.end()
+  await cmdSocket.end()
 })

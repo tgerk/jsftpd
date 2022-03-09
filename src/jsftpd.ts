@@ -918,7 +918,10 @@ export function createFtpServer({
               } else if (!allowUserFileRename) {
                 client.respond("550", "Permission denied")
               } else {
-                renameFileFrom = file
+                renameFileFrom = path.relative(
+                  "/",
+                  path.join(getFolder(), file)
+                )
                 client.respond("350", "File exists")
               }
             }),
@@ -1204,7 +1207,7 @@ export function createFtpServer({
       emitter.emit("download", {
         remoteInfo,
         username,
-        file,
+        file: path.join(getFolder(), file),
       })
     }
 
@@ -1212,7 +1215,7 @@ export function createFtpServer({
       emitter.emit("upload", {
         username,
         remoteInfo,
-        file,
+        file: path.join(getFolder(), file),
       })
     }
 
@@ -1220,8 +1223,8 @@ export function createFtpServer({
       emitter.emit("rename", {
         username,
         remoteInfo,
-        fileFrom,
-        fileTo,
+        fileFrom: path.join("/", fileFrom),
+        fileTo: path.join(getFolder(), fileTo),
       })
     }
 

@@ -1,13 +1,9 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const net = require("net")
-const { PromiseSocket } = require("promise-socket")
 const { sleep, getDataPort, ExpectSocket } = require("./utils")
 
 jest.setTimeout(5000)
-let server,
-  content,
-  dataContent = null
+let server
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
@@ -17,8 +13,6 @@ const cleanup = function () {
     server.cleanup()
     server = null
   }
-  content = ""
-  dataContent = ""
 }
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
@@ -126,10 +120,10 @@ test("test RNFR/RNTO message", async () => {
   )
 
   dataSocket = new ExpectSocket()
-  dataContent = await dataSocket.connect(dataPort, localhost).receive()
-  expect(dataContent.toString().trim()).toMatch("type=file")
-  expect(dataContent.toString().trim()).toMatch("size=15")
-  expect(dataContent.toString().trim()).toMatch("someotherfile")
+  const data = await dataSocket.connect(dataPort, localhost).receive()
+  expect(data).toMatch("type=file")
+  expect(data).toMatch("size=15")
+  expect(data).toMatch("someotherfile")
 
   await sleep(100)
 

@@ -189,7 +189,7 @@ export default function ({
 
   function fileRename(fromFile: string, toFile: string) {
     return fs.rename(
-      path.join(baseFolder, currentFolder, fromFile),
+      path.join(baseFolder, fromFile),  // NOTE:  fromFile is relative to baseFolder, not currentFolder
       path.join(baseFolder, currentFolder, toFile)
     )
   }

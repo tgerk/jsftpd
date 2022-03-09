@@ -176,7 +176,7 @@ export function createFtpServer({
   const tcpServer = createServer()
   tcpServer.on("error", ServerErrorHandler)
   tcpServer.on("listening", () => {
-    ListenHandler("tcp", tcpServer.address())
+    emitListenEvent("tcp", tcpServer.address() as AddressInfo)
   })
   tcpServer.on("connection", SessionHandler)
   tcpServer.maxConnections = config.maxConnections
@@ -187,7 +187,7 @@ export function createFtpServer({
     tlsServer = createSecureServer(config.tls)
     tlsServer.on("error", ServerErrorHandler)
     tlsServer.on("listening", function () {
-      ListenHandler("tls", tlsServer.address())
+      emitListenEvent("tls", tlsServer.address() as AddressInfo)
     })
     tlsServer.on("secureConnection", SessionHandler)
     tlsServer.maxConnections = config.maxConnections
@@ -259,22 +259,23 @@ export function createFtpServer({
     let passivePort: net.Server
     let pasvSocket = new Deferred<Socket | TLSSocket>()
 
-    cmdSocket.on("error", SessionErrorHandler)
+    const localAddr =
+        cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown",
+      remoteAddr =
+        cmdSocket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown",
+      remoteInfo = `[(${socketKey}) ${remoteAddr}:${cmdSocket.remotePort}]`
+
+    cmdSocket.on("error", SessionErrorHandler("command socket"))
     cmdSocket.on("data", CmdHandler)
     cmdSocket.on("close", () => {
       openSessions.delete(socketKey)
-      DebugHandler(`${remoteInfo} FTP connection closed`)
+      emitDebugMessage(`FTP connection closed`)
       if (passivePort) {
         passivePort.close()
       }
     })
 
-    const localAddr =
-      cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown"
-    const remoteAddr =
-      cmdSocket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
-    const remoteInfo = `[(${socketKey}) ${remoteAddr}:${cmdSocket.remotePort}]`
-    DebugHandler(`${remoteInfo} new FTP connection established`)
+    emitDebugMessage(`established FTP connection`)
 
     function respond(
       this: Socket & {
@@ -284,9 +285,8 @@ export function createFtpServer({
       message: string,
       delimiter = " "
     ) {
-      LogHandler(`${remoteInfo} <<< ${code} ${message}`)
-      this.writable &&
-        this.write(Buffer.from(`${code}${delimiter}${message}\r\n`))
+      emitDebugMessage(`<<< ${code} ${message}`)
+      this.write(Buffer.from(`${code}${delimiter}${message}\r\n`))
     }
     let client = Object.assign(cmdSocket, { respond })
     client.respond("220", "Welcome")
@@ -332,9 +332,7 @@ export function createFtpServer({
         data = data.toString()
         const [cmd, ...args] = data.trim().split(/\s+/),
           arg = args.join(" ")
-        LogHandler(
-          `${remoteInfo} >>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : arg}]`
-        )
+        emitDebugMessage(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : arg}]`)
         if (authenticated) {
           if (cmd in authenticatedMethods) {
             authenticatedMethods[cmd as keyof FTPCommandTable](cmd, arg)
@@ -348,7 +346,7 @@ export function createFtpServer({
           cmdSocket.end()
         }
       } catch (err) {
-        DebugHandler(err)
+        SessionErrorHandler(`command execution [${data}]`)(err)
         client.respond("550", "Unexpected server error")
         cmdSocket.end()
       }
@@ -362,9 +360,8 @@ export function createFtpServer({
         const [loginType, userCredential] = userLoginType(username)
         switch (loginType) {
           case LoginType.NoPassword:
-            DebugHandler(`${remoteInfo} username[${username}] no password`)
             setUserRights(userCredential).then(() => {
-              LoginHandler()
+              emitLoginEvent()
               client.respond("232", "User logged in")
             })
             break
@@ -386,9 +383,8 @@ export function createFtpServer({
             username = `anon(${password})`
           case LoginType.NoPassword: // eslint-disable-line no-fallthrough
           case LoginType.Password:
-            DebugHandler(`${remoteInfo} username[${username}] authenticated`)
             setUserRights(userCredential).then(() => {
-              LoginHandler()
+              emitLoginEvent()
               client.respond("230", "Logged on")
             })
             break
@@ -409,7 +405,7 @@ export function createFtpServer({
             isServer: true,
           })
           cmdSocket.on("secure", () => {
-            DebugHandler(`${remoteInfo} secure connection established`)
+            emitDebugMessage(`connection secured`)
             client = Object.assign(cmdSocket, { respond })
             isEncrypted = "encrypted" in cmdSocket
           })
@@ -425,7 +421,7 @@ export function createFtpServer({
       function QUIT() {
         client.respond("221", "Goodbye")
         cmdSocket.end()
-        authenticated && LogoffHandler()
+        authenticated && emitLogoffEvent()
       }
 
       /*
@@ -487,12 +483,12 @@ export function createFtpServer({
       /*
        *  PORT
        */
-      function PORT(cmd: string, arg: string) {
+      function PORT(cmd: string, spec: string) {
         passivePort = undefined
-        const spec = arg.split(",")
-        if (spec.length === 6) {
-          dataAddr = spec[0] + "." + spec[1] + "." + spec[2] + "." + spec[3]
-          dataPort = parseInt(spec[4], 10) * 256 + parseInt(spec[5])
+        const [net0, net1, net2, net3, portHi, portLo] = spec.split(",")
+        dataAddr = [net0, net1, net2, net3].join(".")
+        dataPort = parseInt(portHi, 10) * 256 + parseInt(portLo)
+        if (dataAddr.match(/\d{1,3}(\.\d{1,3}){3}/) && dataPort > 0) {
           client.respond("200", "Port command successful")
         } else {
           dataAddr = dataPort = undefined
@@ -507,9 +503,7 @@ export function createFtpServer({
         dataAddr = dataPort = undefined
         initPasvSocket().then(
           (port) => {
-            DebugHandler(
-              `${remoteInfo} listening on ${port} for data connection`
-            )
+            emitDebugMessage(`listening on ${port} for data connection`)
             client.respond(
               "227",
               util.format(
@@ -521,7 +515,7 @@ export function createFtpServer({
             )
           },
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             passivePort = undefined
             client.respond("501", "Passive command failed")
           }
@@ -531,12 +525,12 @@ export function createFtpServer({
       /*
        *  EPRT
        */
-      function EPRT(cmd: string, arg: string) {
+      function EPRT(cmd: string, spec: string) {
         passivePort = undefined
-        const spec = arg.split("|")
-        if (spec.length === 5) {
-          dataAddr = spec[2]
-          dataPort = parseInt(spec[3], 10)
+        const addrSpec = spec.split("|")
+        if (addrSpec.length === 5) {
+          dataAddr = addrSpec[2]
+          dataPort = parseInt(addrSpec[3], 10)
           client.respond("200", "Extended Port command successful")
         } else {
           dataAddr = dataPort = undefined
@@ -551,16 +545,14 @@ export function createFtpServer({
         dataAddr = dataPort = undefined
         initPasvSocket().then(
           (port) => {
-            DebugHandler(
-              `${remoteInfo} listening on ${port} for data connection`
-            )
+            emitDebugMessage(`listening on ${port} for data connection`)
             client.respond(
               "229",
               util.format("Entering extended passive mode (|||%d|)", port)
             )
           },
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             passivePort = undefined
             client.respond("501", "Extended passive command failed")
           }
@@ -623,7 +615,7 @@ export function createFtpServer({
                       `CWD successful. "${folder}" is current directory`
                     ),
                   (error) => {
-                    DebugHandler(error)
+                    emitLogMessage(error)
                     client.respond("530", "CWD not successful")
                   }
                 )
@@ -632,7 +624,7 @@ export function createFtpServer({
               }
             }),
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("550", `Command failed "${folder}`)
           }
         )
@@ -655,7 +647,7 @@ export function createFtpServer({
                       client.respond("250", "Folder deleted successfully")
                     },
                     (error) => {
-                      DebugHandler(error)
+                      emitLogMessage(error)
                       client.respond("501", "Command failed")
                     }
                   )
@@ -666,7 +658,7 @@ export function createFtpServer({
             }
           },
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("550", `Command failed "${folder}`)
           }
         )
@@ -690,14 +682,14 @@ export function createFtpServer({
                       client.respond("250", "Folder created successfully")
                     },
                     (error) => {
-                      DebugHandler(error)
+                      emitLogMessage(error)
                       client.respond("501", "Command failed")
                     }
                   )
                 }
               }),
             (error) => {
-              DebugHandler(error)
+              emitLogMessage(error)
               client.respond("550", `Command failed "${folder}`)
             }
           )
@@ -715,9 +707,7 @@ export function createFtpServer({
             folderList(cmd, folder)
               .then((listing) => listing.join("\r\n"))
               .then((listing) => {
-                DebugHandler(
-                  `${remoteInfo} LIST response on data channel\r\n${listing}`
-                )
+                emitDebugMessage(`LIST response on data channel\r\n${listing}`)
                 socket.end(Buffer.from(listing + "\r\n"))
                 client.respond(
                   "226",
@@ -741,7 +731,7 @@ export function createFtpServer({
                 client.respond("213", size.toString())
               },
               (error) => {
-                DebugHandler(error)
+                emitLogMessage(error)
                 switch (error.code) {
                   case "ENOENT":
                     client.respond("550", "File not found")
@@ -753,7 +743,7 @@ export function createFtpServer({
               }
             ),
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("501", "Command failed")
           }
         )
@@ -773,7 +763,7 @@ export function createFtpServer({
                   client.respond("250", "File deleted successfully")
                 },
                 (error) => {
-                  DebugHandler(error)
+                  emitLogMessage(error)
                   switch (error.code) {
                     case "ENOENT":
                       client.respond("550", "File not found")
@@ -785,7 +775,7 @@ export function createFtpServer({
                 }
               ),
             (error) => {
-              DebugHandler(error)
+              emitLogMessage(error)
               client.respond("501", "Command failed")
             }
           )
@@ -805,14 +795,14 @@ export function createFtpServer({
                 if (!isFile) {
                   client.respond("550", "File not found")
                 } else {
-                  openDataSocket()
-                    .then((writeSocket) =>
+                  openDataSocket().then(
+                    (writeSocket) =>
                       fileRetrieve(file, dataOffset)
                         .then((readStream) => {
                           asciiOn && writeSocket.setEncoding("ascii")
                           readStream.on("error", (error) => {
                             // incomplete write
-                            DebugHandler(error)
+                            emitLogMessage(error)
                             writeSocket.destroy()
                             client.respond("550", `Transfer failed "${file}"`)
                           })
@@ -827,27 +817,30 @@ export function createFtpServer({
                           readStream.on("close", () => {
                             // end of file
                             writeSocket.end()
+                            emitDownloadEvent(file)
                             client.respond(
                               "226",
                               `Successfully transferred "${file}"`
                             )
                           })
-                          readStream.pipe(writeSocket)
+                          readStream
+                            // transform or log outbound stream
+                            .pipe(writeSocket)
                         })
                         .finally(() => {
                           dataOffset = 0
-                        })
-                    )
-                    .catch((error) => {
-                      DebugHandler(error)
+                        }),
+                    (error) => {
+                      emitLogMessage(error)
                       client.respond("501", "Command failed")
-                    })
+                    }
+                  )
                 }
               })
             }
           },
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("550", `Transfer failed "${param}`)
           }
         )
@@ -866,44 +859,48 @@ export function createFtpServer({
                   isFile ? "File already exists" : `Transfer failed "${file}"`
                 )
               } else {
-                openDataSocket()
-                  .then((readSocket) => {
+                openDataSocket().then(
+                  (readSocket) => {
                     fileStore(file, dataOffset, asciiOn ? "ascii" : "binary")
                       .then((writeStream) => {
                         writeStream.on("error", (error) => {
                           // incomplete write
-                          DebugHandler(error)
+                          emitLogMessage(error)
                           readSocket.destroy()
                           client.respond("550", `Transfer failed "${file}"`)
                         })
                         readSocket.on("error", (error) => {
                           // incomplete upload
-                          DebugHandler(error)
+                          emitLogMessage(error)
                           writeStream.destroy()
                           client.respond("550", `Transfer failed "${file}"`)
                         })
                         readSocket.on("end", () => {
                           // end of file
                           writeStream.end()
+                          emitUploadEvent(file)
                           client.respond(
                             "226",
                             `Successfully transferred "${file}"`
                           )
                         })
-                        readSocket.pipe(writeStream)
+                        readSocket
+                          // transform or log inbound stream
+                          .pipe(writeStream)
                       })
                       .finally(() => {
                         dataOffset = 0
                       })
-                  })
-                  .catch((error) => {
-                    DebugHandler(error)
+                  },
+                  (error) => {
+                    emitLogMessage(error)
                     client.respond("501", "Command failed")
-                  })
+                  }
+                )
               }
             }),
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("550", `Transfer failed "${param}"`)
           }
         )
@@ -926,7 +923,7 @@ export function createFtpServer({
               }
             }),
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("501", "Command failed")
           }
         )
@@ -948,10 +945,11 @@ export function createFtpServer({
                   fileRename(renameFileFrom, file)
                     .then(
                       () => {
+                        emitRenameEvent(renameFileFrom, file)
                         client.respond("250", "File renamed successfully")
                       },
                       (error) => {
-                        DebugHandler(error)
+                        emitLogMessage(error)
                         client.respond("550", "File rename failed")
                       }
                     )
@@ -961,7 +959,7 @@ export function createFtpServer({
                 }
               }),
             (error) => {
-              DebugHandler(error)
+              emitLogMessage(error)
               client.respond("501", "Command failed")
             }
           )
@@ -981,7 +979,7 @@ export function createFtpServer({
                 client.respond("253", "Date/time changed okay")
               },
               (error) => {
-                DebugHandler(error)
+                emitLogMessage(error)
                 switch (error.code) {
                   case "ENOENT":
                     client.respond("550", "File does not exist")
@@ -993,7 +991,7 @@ export function createFtpServer({
               }
             ),
           (error) => {
-            DebugHandler(error)
+            emitLogMessage(error)
             client.respond("501", "Command failed")
           }
         )
@@ -1067,23 +1065,23 @@ export function createFtpServer({
       if (isEncrypted && shouldProtect) {
         passivePort = createSecureServer(config.tls)
         passivePort.on("secureConnection", (socket) => {
-          DebugHandler(`${remoteInfo} secure data connection established`)
+          emitDebugMessage(`secure data connection established`)
           setupSocket(socket)
         })
       } else {
         passivePort = createServer()
         passivePort.on("connection", (socket) => {
+          emitDebugMessage(`data connection established`)
           if (isEncrypted && shouldProtect) {
             socket = new TLSSocket(socket, {
               isServer: true,
               secureContext: createSecureContext(config.tls),
             })
             socket.on("secure", () => {
-              DebugHandler(`${remoteInfo} data connection is secure`)
+              emitDebugMessage(`data connection is secured`)
               setupSocket(socket)
             })
           } else {
-            DebugHandler(`${remoteInfo} data connection established`)
             setupSocket(socket)
           }
         })
@@ -1102,12 +1100,11 @@ export function createFtpServer({
       )
 
       function setupSocket(socket: Socket | TLSSocket) {
-        socket.on("error", SessionErrorHandler)
+        socket.on("error", SessionErrorHandler("passive data socket"))
         socket.on("close", () => {
           pasvSocket = new Deferred<Socket | TLSSocket>()
         })
 
-        // socket.on("data", (buf) => DebugHandler(buf.toString()))
         pasvSocket.resolve(socket)
       }
 
@@ -1150,31 +1147,44 @@ export function createFtpServer({
       return new Promise<Socket>((resolve, reject) => {
         if (dataAddr && dataPort) {
           client.respond("150", "Opening data connection")
-          DebugHandler(
-            `${remoteInfo} connect to client data socket isSecure[${isEncrypted}] protection[${shouldProtect}] addr[${dataAddr}] port[${dataPort}]`
+          emitDebugMessage(
+            `connect to client data socket isSecure[${isEncrypted}] protection[${shouldProtect}] addr[${dataAddr}] port[${dataPort}]`
           )
           let socket = net.connect(dataPort, dataAddr, () => {
+            emitDebugMessage(
+              `data connection to ${dataAddr}:${dataPort} established`
+            )
             if (isEncrypted && shouldProtect) {
               socket = new TLSSocket(socket, {
                 isServer: true,
                 secureContext: createSecureContext(config.tls),
               })
               socket.on("secure", () => {
-                DebugHandler(`${remoteInfo} data connection is secure`)
+                emitDebugMessage(
+                  `data connection to ${dataAddr}:${dataPort} secured`
+                )
                 resolve(socket) // data connection resolved
               })
             } else {
               resolve(socket) // data connection resolved
             }
           })
-          socket.on("error", DebugHandler)
+          socket.on("error", SessionErrorHandler("active data socket"))
         } else {
           reject(Error("active or passive mode not selected"))
         }
       })
     }
 
-    function LoginHandler() {
+    function emitLogMessage(msg: string | { toString: () => string }) {
+      emitter.emit("log", `${getDateForLogs()} ${remoteInfo} ${msg}`)
+    }
+
+    function emitDebugMessage(msg: string | { toString: () => string }) {
+      emitter.emit("debug", `${getDateForLogs()} ${remoteInfo} ${msg}`)
+    }
+
+    function emitLoginEvent() {
       emitter.emit("login", {
         remoteInfo,
         username,
@@ -1182,7 +1192,7 @@ export function createFtpServer({
       })
     }
 
-    function LogoffHandler() {
+    function emitLogoffEvent() {
       emitter.emit("logoff", {
         remoteInfo,
         username,
@@ -1190,23 +1200,54 @@ export function createFtpServer({
       })
     }
 
-    function SessionErrorHandler(err: NodeJS.ErrnoException) {
-      if ("code" in err && err.code === "ECONNRESET") {
-        DebugHandler(err)
-        return
+    function emitDownloadEvent(file: string) {
+      emitter.emit("download", {
+        remoteInfo,
+        username,
+        file,
+      })
+    }
+
+    function emitUploadEvent(file: string) {
+      emitter.emit("upload", {
+        username,
+        remoteInfo,
+        file,
+      })
+    }
+
+    function emitRenameEvent(fileFrom: string, fileTo: string) {
+      emitter.emit("rename", {
+        username,
+        remoteInfo,
+        fileFrom,
+        fileTo,
+      })
+    }
+
+    function SessionErrorHandler(socketType: string) {
+      return function SocketErrorHandler(err: NodeJS.ErrnoException) {
+        if (err?.code === "ECONNRESET") {
+          emitLogMessage(err)
+          return
+        }
+
+        emitter.emit(
+          "error",
+          `${socketType} error ${remoteInfo} ${getDateForLogs()} ${util.inspect(
+            err,
+            {
+              showHidden: false,
+              depth: null,
+              breakLength: Infinity,
+            }
+          )}`
+        )
       }
-      console.error(
-        `session error ${remoteInfo}`,
-        `${getDateForLogs()} ${util.inspect(err, {
-          showHidden: false,
-          depth: null,
-          breakLength: Infinity,
-        })}`
-      )
     }
   }
 
-  function ListenHandler(protocol: string, address: string | AddressInfo) {
+  function emitListenEvent(protocol: string, address: AddressInfo) {
     emitter.emit("listen", {
       protocol,
       address: (address as AddressInfo).address,
@@ -1215,22 +1256,10 @@ export function createFtpServer({
     })
   }
 
-  function LogHandler(msg: string | { toString: () => string }) {
-    emitter.emit("log", `${getDateForLogs()} ${msg}`)
-  }
-
-  function DebugHandler(msg: string | { toString: () => string }) {
-    emitter.emit("debug", `${getDateForLogs()} ${msg}`)
-  }
-
   function ServerErrorHandler(err: NodeJS.ErrnoException) {
-    if ("code" in err && err.code === "ECONNRESET") {
-      DebugHandler(err)
-      return
-    }
-    console.error(
-      "server error",
-      `${getDateForLogs()} ${util.inspect(err, {
+    emitter.emit(
+      "error",
+      `server error ${getDateForLogs()} ${util.inspect(err, {
         showHidden: false,
         depth: null,
         breakLength: Infinity,

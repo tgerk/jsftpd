@@ -41,8 +41,10 @@ export type ComposableStoreHandlerFactory = (
 export type ServerOptions = {
   port?: number
   securePort?: number
-  maxConnections?: number
   minDataPort?: number
+  maxConnections?: number
+  timeout?: number
+  dataTimeout?: number
   tls?: TlsOptions
   auth?: ComposableAuthHandlerFactory
   store?: ComposableStoreHandlerFactory
@@ -63,8 +65,8 @@ export function createFtpServer({
   options = {
     port: 21,
     securePort: 990,
-    maxConnections: 10,
     minDataPort: 1024,
+    maxConnections: 10,
     ...options,
   }
 
@@ -92,6 +94,8 @@ export function createFtpServer({
     emitListenEvent("tcp", tcpServer.address() as AddressInfo)
   })
   tcpServer.on("connection", SessionHandler)
+
+  // concurrent connections, distinct from the listen backlog, excess connections are immediately closed
   tcpServer.maxConnections = options.maxConnections
 
   // setup FTP on TLS
@@ -103,6 +107,8 @@ export function createFtpServer({
       emitListenEvent("tls", tlsServer.address() as AddressInfo)
     })
     tlsServer.on("secureConnection", SessionHandler)
+
+    // concurrent connections, distinct from the listen backlog, excess connections are immediately closed
     tlsServer.maxConnections = options.maxConnections
   }
 
@@ -191,6 +197,14 @@ export function createFtpServer({
     client.respond("220", "Welcome")
 
     let passivePort: Server, dataSocket: Deferred<Socket | TLSSocket>
+
+    if ("timeout" in options) {
+      cmdSocket.setTimeout(options.timeout, () => {
+        authenticated && emitLogoffEvent()
+        client.respond("221", "Goodbye")
+        cmdSocket.end()
+      })
+    }
 
     function CmdHandler(data: string) {
       interface FTPCommandTable {
@@ -323,9 +337,9 @@ export function createFtpServer({
        *  QUIT
        */
       function QUIT() {
+        authenticated && emitLogoffEvent()
         client.respond("221", "Goodbye")
         cmdSocket.end()
-        authenticated && emitLogoffEvent()
       }
 
       /*
@@ -971,10 +985,16 @@ export function createFtpServer({
       // inbound connection is deferred
       dataSocket = new Deferred<Socket | TLSSocket>()
       function setupSocket(socket: Socket | TLSSocket) {
+        if ("dataTimeout" in options || "timeout" in options) {
+          socket.setTimeout(options.dataTimeout || options.timeout, () => {
+            socket.destroy()
+          })
+        }
         socket.on("error", SessionErrorHandler("passive data socket"))
         socket.on("close", () => {
           // reset for subsequent connection
           dataSocket = new Deferred<Socket | TLSSocket>()
+          emitDebugMessage(`data connection has closed`)
         })
 
         dataSocket.resolve(socket)
@@ -1006,7 +1026,7 @@ export function createFtpServer({
       }
 
       passivePort.maxConnections = 1
-      passivePort.on("error", ServerErrorHandler)
+      passivePort.on("error", SessionErrorHandler)
 
       return findAvailablePort().then(
         (port) =>
@@ -1018,6 +1038,13 @@ export function createFtpServer({
           })
       )
 
+      /**
+       * maxConnections is the size of a block of ports for incoming data connections
+       * This is necessary for firewalls that can open a port-range, & maybe associated
+       *  and contingent on connection to the FTP port
+       * TODO: if minDataPort is not set, just listen on a random port ...ffs
+       * if TCP and TLS ports are both listening, may need double maxConnections?
+       */
       function findAvailablePort() {
         return new Promise<number>((resolve, reject) => {
           const { minDataPort, maxConnections } = options
@@ -1057,6 +1084,16 @@ export function createFtpServer({
       function makeDataConnection(
         resolve: (value: Socket | TLSSocket) => void
       ) {
+        function setupSocket(socket: Socket | TLSSocket) {
+          if ("dataTimeout" in options || "timeout" in options) {
+            socket.setTimeout(options.dataTimeout || options.timeout, () => {
+              socket.destroy()
+            })
+          }
+
+          resolve(socket)
+        }
+
         emitDebugMessage(
           `connect to client data socket isSecure[${
             "encrypted" in client
@@ -1071,16 +1108,17 @@ export function createFtpServer({
             })
             socket.on("secure", () => {
               emitDebugMessage(`data connection to ${addr}:${port} secured`)
-              resolve(socket) // data connection resolved
+              setupSocket(socket) // data connection resolved
             })
           } else {
-            resolve(socket) // data connection resolved
+            setupSocket(socket) // data connection resolved
           }
         })
         socket.on("error", SessionErrorHandler("active data socket"))
         socket.on("close", () => {
           // reset for subsequent connection
           dataSocket = new Deferred<Socket | TLSSocket>(makeDataConnection)
+          emitDebugMessage(`data connection has closed`)
         })
       }
     }

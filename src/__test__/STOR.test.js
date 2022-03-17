@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer } = require("../jsftpd.ts")
-const { getDataPort, ExpectSocket, addFactoryExtensions } = require("./utils")
+const { getDataPort, sleep, ExpectSocket, addFactoryExtensions } = require("./utils")
 const { Writable } = require("stream")
 
 jest.setTimeout(5000)
@@ -119,6 +119,43 @@ test("test STOR message", async () => {
   const response = await cmdSocket.response()
   expect(response).toMatch("150 Awaiting passive connection")
   expect(response).toMatch('226 Successfully transferred "/"')
+
+  await cmdSocket.end()
+})
+
+test("test STOR message failes due to socket timeout", async () => {
+  const users = [
+    {
+      username: "john",
+      allowLoginWithoutPassword: true,
+    },
+  ]
+  server = createFtpServer({
+    port: 50021,
+    user: users,
+    minDataPort: dataPort,
+    timeout: 3000
+  })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("EPSV").response()).toBe(
+    `229 Entering extended passive mode (|||${dataPort}|)`
+  )
+
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost, "ascii")
+
+  await sleep(3500)
+  expect(dataSocket.socket.destroyed).toBe(true)
 
   await cmdSocket.end()
 })

@@ -322,7 +322,7 @@ test("test STOR message with handler", async () => {
   )
 
   expect(fileStore).toBeCalledTimes(1)
-  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0, "binary")
+  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
 
   await cmdSocket.end()
 })
@@ -383,7 +383,7 @@ test("test STOR message with handler fails", async () => {
   expect(await cmdSocket.response()).toBe('550 Transfer failed "mytestfile"')
 
   expect(fileStore).toBeCalledTimes(1)
-  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0, "binary")
+  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
 
   await cmdSocket.end()
 })

@@ -157,32 +157,29 @@ export default function ({
     return fs.unlink(path.join(baseFolder, currentFolder, file))
   }
 
-  function fileRetrieve(file: string, restOffset: number) {
+  function fileRetrieve(file: string, seek: number) {
     return fs.open(path.join(baseFolder, currentFolder, file), "r").then((fd) =>
       fd.createReadStream({
-        start: restOffset,
+        start: seek,
         autoClose: true,
         emitClose: true,
+        // Use highWaterMark that might hold the whole file in process memory
+        // -mitigate chance of corruption due to overwriting file on disk between chunked reads
+        // -actual memory consumption determined by file size and difference of read and write speeds
+        highWaterMark:
+          parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
       })
     )
   }
 
-  function fileStore(
-    file: string,
-    restOffset: number,
-    encoding?: BufferEncoding
-  ) {
+  function fileStore(file: string, seek: number) {
     return fs
-      .open(
-        path.join(baseFolder, currentFolder, file),
-        restOffset > 0 ? "a+" : "w"
-      )
+      .open(path.join(baseFolder, currentFolder, file), seek > 0 ? "a+" : "w")
       .then((fd) =>
         fd.createWriteStream({
-          start: restOffset,
+          start: seek,
           autoClose: true,
           emitClose: true,
-          encoding,
         })
       )
   }

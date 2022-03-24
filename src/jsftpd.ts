@@ -15,9 +15,11 @@ import tls, {
 import util from "util"
 import path from "path"
 import fs from "fs"
+import { Readable, Writable } from "stream"
 import { EventEmitter } from "events"
 
 import Deferred from "./deferred"
+import { deasciify, asciify } from "./ascii"
 import localFsBackend from "./backends/local"
 import configAuthBackend from "./backends/auth"
 
@@ -90,12 +92,8 @@ export interface BackendHandlers {
   fileExists: (file: string) => Promise<boolean>
   fileSize: (file: string) => Promise<number>
   fileDelete: (file: string) => Promise<void>
-  fileRetrieve: (file: string, restOffset: number) => Promise<fs.ReadStream>
-  fileStore: (
-    file: string,
-    restOffset: number,
-    encoding: string
-  ) => Promise<fs.WriteStream>
+  fileRetrieve: (file: string, seek: number) => Promise<Readable>
+  fileStore: (file: string, seek: number) => Promise<Writable>
   fileRename: (fromFile: string, toFile: string) => Promise<void>
   fileSetTimes: (file: string, mtime: number) => Promise<void>
 }
@@ -563,7 +561,7 @@ export function createFtpServer({
        *  SYST
        */
       function SYST() {
-        client.respond("215", "UNIX")
+        client.respond("215", process.env["OS"] ?? "UNIX")
       }
 
       /*
@@ -703,7 +701,7 @@ export function createFtpServer({
        */
       function LIST(cmd: FolderListFormat, folder: string) {
         openDataSocket()
-          .then((socket) => {
+          .then((socket: Writable) => {
             folderList(cmd, folder)
               .then((listing) => listing.join("\r\n"))
               .then((listing) => {
@@ -796,10 +794,9 @@ export function createFtpServer({
                   client.respond("550", "File not found")
                 } else {
                   openDataSocket().then(
-                    (writeSocket) =>
+                    (writeSocket: Writable) =>
                       fileRetrieve(file, dataOffset)
                         .then((readStream) => {
-                          asciiOn && writeSocket.setEncoding("ascii")
                           readStream.on("error", (error) => {
                             // incomplete write
                             emitLogMessage(error)
@@ -823,9 +820,11 @@ export function createFtpServer({
                               `Successfully transferred "${file}"`
                             )
                           })
-                          readStream
-                            // transform or log outbound stream
-                            .pipe(writeSocket)
+                          if (asciiOn) {
+                            readStream = asciify(readStream)
+                          }
+                          // transform or log outbound stream
+                          readStream.pipe(writeSocket)
                         })
                         .finally(() => {
                           dataOffset = 0
@@ -860,8 +859,8 @@ export function createFtpServer({
                 )
               } else {
                 openDataSocket().then(
-                  (readSocket) => {
-                    fileStore(file, dataOffset, asciiOn ? "ascii" : "binary")
+                  (readSocket: Readable) => {
+                    fileStore(file, dataOffset)
                       .then((writeStream) => {
                         writeStream.on("error", (error) => {
                           // incomplete write
@@ -884,9 +883,11 @@ export function createFtpServer({
                             `Successfully transferred "${file}"`
                           )
                         })
-                        readSocket
-                          // transform or log inbound stream
-                          .pipe(writeStream)
+                        if (asciiOn) {
+                          readSocket = deasciify(readSocket)
+                        }
+                        // transform or log inbound stream
+                        readSocket.pipe(writeStream)
                       })
                       .finally(() => {
                         dataOffset = 0

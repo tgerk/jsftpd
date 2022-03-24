@@ -1,3 +1,13 @@
+/**
+ * a Deferred<T> is a Promise<T>:  it may be resolved, rejected, or unsettled
+ * the process that leads to resolution or rejection is what is deferred
+ * 
+ * example:
+ *  const val = new Deferred<String>()
+ *  setTimeout(() => { val.resolve("Hello World") }, 200)
+ *  val.then(console.log, console.error)
+ */
+
 interface IDeferred<T> extends Promise<T> {
   resolve(val: T): undefined
   reject(error: Error): undefined

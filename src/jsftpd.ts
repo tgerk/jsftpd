@@ -19,7 +19,7 @@ import { EventEmitter } from "events"
 
 import Deferred from "./deferred"
 import { deasciify, asciify } from "./ascii"
-import localBackend from "./backends/local"
+import localBackend, { FStat } from "./backends/local"
 import internalAuth from "./backends/auth"
 
 export enum LoginType {
@@ -64,7 +64,6 @@ export type UserCredential = {
   password?: string
   basefolder?: string
   allowLoginWithoutPassword?: boolean
-  filenameTransform?: FilenameTransformer
 } & UserPermissions
 
 export interface AuthHandlers {
@@ -75,7 +74,6 @@ export interface AuthHandlers {
   ): [LoginType, UserCredential?]
 }
 
-export type FolderListFormat = "NLST" | "MLSD" | "LIST"
 export interface StoreHandlers {
   resolveFolder(folder: string): Promise<string>
   resolveFile(file: string): Promise<string>
@@ -86,7 +84,7 @@ export interface StoreHandlers {
   folderExists: (folder?: string) => Promise<boolean>
   folderCreate: (folder: string) => Promise<void>
   folderDelete: (folder: string) => Promise<void>
-  folderList: (format: FolderListFormat, folder?: string) => Promise<string[]>
+  folderList: (folder?: string) => Promise<FStat[]>
 
   fileExists: (file: string) => Promise<boolean>
   fileSize: (file: string) => Promise<number>
@@ -129,8 +127,8 @@ const ConfigDefaults: ConfigOptions = {
   minDataPort: 1024,
 }
 
-export type AuthHandlersFactory = typeof internalAuth // (options: AuthOptions) => AuthHandlers
-export type StoreHandlersFactory = typeof localBackend // ( user: UserCredential & { username: string } ) => StoreHandlers
+export type AuthHandlersFactory = typeof internalAuth
+export type StoreHandlersFactory = typeof localBackend
 
 export function createFtpServer({
   tls: tlsConfig,
@@ -246,8 +244,7 @@ export function createFtpServer({
     let renameFileFrom = ""
     let dataOffset = 0
 
-    let passivePort: net.Server,
-      dataSocket: Deferred<Socket | TLSSocket>
+    let passivePort: net.Server, dataSocket: Deferred<Socket | TLSSocket>
 
     const localAddr =
         cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown",
@@ -689,11 +686,11 @@ export function createFtpServer({
        *  MLSD
        *  NLST
        */
-      function LIST(cmd: FolderListFormat, folder: string) {
+      function LIST(cmd: string, folder: string) {
         openDataSocket().then(
           (socket: Writable) => {
-            folderList(cmd, folder)
-              .then((listing) => listing.join("\r\n"))
+            folderList(folder)
+              .then((stats) => stats.map(formatListing(cmd)).join("\r\n"))
               .then((listing) => {
                 emitDebugMessage(`LIST response on data channel\r\n${listing}`)
                 socket.end(Buffer.from(listing + "\r\n"))
@@ -1265,9 +1262,35 @@ export function createFtpServer({
     )
   }
 }
+export default createFtpServer
 
-// time/date formatter utilities
-export function getDateForLIST(mtime: Date): string {
+// formatter utilities: time/date, folder listing
+function formatListing(format = "LIST") {
+  switch (format) {
+    case "NLST":
+      return (fstat: FStat) => fstat.fname
+    case "MLSD":
+      return (fstat: FStat) =>
+        util.format(
+          "type=%s;modify=%s;%s %s",
+          fstat.isDirectory() ? "dir" : "file",
+          getDateForMLSD(fstat.mtime),
+          fstat.isDirectory() ? "" : "size=" + fstat.size.toString() + ";",
+          fstat.fname
+        )
+    case "LIST":
+    default:
+      return (fstat: FStat) =>
+        util.format(
+          "%s 1 ? ? %s %s %s", // showing link-count = 1, don't expose uid, gid
+          fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--",
+          String(fstat.isDirectory() ? "0" : fstat.size).padStart(14, " "),
+          getDateForLIST(fstat.mtime),
+          fstat.fname
+        )
+  }
+}
+function getDateForLIST(mtime: Date): string {
   const now = new Date(mtime)
   const MM = [
     "Jan",
@@ -1289,7 +1312,7 @@ export function getDateForLIST(mtime: Date): string {
   return `${MM} ${DD} ${H}:${M}`
 }
 
-export function getDateForMLSD(mtime: Date): string {
+function getDateForMLSD(mtime: Date): string {
   const now = new Date(mtime)
   const MM = (now.getMonth() + 1).toString().padStart(2, "0")
   const DD = now.getDate().toString().padStart(2, "0")
@@ -1314,5 +1337,3 @@ function getDateForLogs(date?: Date): string {
   date = date || new Date()
   return date.toISOString()
 }
-
-export default createFtpServer

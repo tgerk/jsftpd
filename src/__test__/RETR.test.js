@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const { getCmdPortTCP, getDataPort, ExpectSocket, addFactoryExtensions } = require("./utils")
+const {
+  getCmdPortTCP,
+  getDataPort,
+  ExpectSocket,
+  addFactoryExtensions,
+} = require("./utils")
 const { Readable, Writable } = require("stream")
 
 jest.setTimeout(5000)

@@ -60,7 +60,8 @@ class ExpectSocket extends PromiseSocket {
 }
 
 function addFactoryExtensions(extensions) {
-  return (factory) => Object.assign((opts) => ({ ...factory(opts), ...extensions }), { ...factory })
+  return (factory) =>
+    Object.assign((opts) => Object.assign(factory(opts), extensions), factory)
 }
 
 module.exports = {
@@ -70,5 +71,5 @@ module.exports = {
   getCmdPortTLS,
   getDataPort,
   ExpectSocket,
-  addFactoryExtensions
+  addFactoryExtensions,
 }

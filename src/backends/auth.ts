@@ -30,14 +30,9 @@ function getAnonPermissions(permissions: AnonymousPermissions) {
   return credential
 }
 
-function getUserPermissions({
-  basefolder,
-  filenameTransform,
-  ...permissions
-}: UserCredential) {
+function getUserPermissions({ basefolder, ...permissions }: UserCredential) {
   const credential: UserCredential = { ...defaults }
   if (basefolder) credential.basefolder = basefolder
-  if (filenameTransform) credential.filenameTransform = filenameTransform
   for (const k in credential) {
     if (k in permissions) {
       credential[k as userPermissions] = permissions[k as userPermissions]

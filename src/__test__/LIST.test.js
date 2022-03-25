@@ -6,7 +6,7 @@ const {
   getDataPort,
   formatPort,
   ExpectSocket,
-  addFactoryExtensions
+  addFactoryExtensions,
 } = require("./utils")
 
 jest.setTimeout(5000)
@@ -62,8 +62,7 @@ test("test LIST message", async () => {
 
   let dataSocket = new ExpectSocket()
   const data = await dataSocket.connect(dataPort, localhost).receive()
-  expect(data).toMatch("dr--r--r--")
-  expect(data).toMatch("john john")
+  expect(data).toMatch("dr--r--r-- 1 ? ?")
 
   const response = await cmdSocket.response()
   expect(response).toMatch("150 Awaiting passive connection")

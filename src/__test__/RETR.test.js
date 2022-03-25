@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const { getCmdPortTCP, getDataPort, ExpectSocket } = require("./utils")
+const { getCmdPortTCP, getDataPort, ExpectSocket, addFactoryExtensions } = require("./utils")
 const { Readable, Writable } = require("stream")
 
 jest.setTimeout(5000)
@@ -230,7 +230,7 @@ test("test RETR message with handler", async () => {
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(doesFileExist)
       },
@@ -314,7 +314,7 @@ test("test RETR message with handler fails", async () => {
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(doesFileExist)
       },
@@ -379,7 +379,7 @@ test("test RETR message no active or passive mode", async () => {
   server = createServer({
     port: cmdPortTCP,
     user: users,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(true)
       },

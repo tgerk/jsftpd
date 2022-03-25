@@ -9,6 +9,7 @@ const {
   getDataPort,
   formatPort,
   ExpectSocket,
+  addFactoryExtensions,
 } = require("./utils")
 
 jest.setTimeout(5000)
@@ -648,7 +649,7 @@ test("test MFMT message with handler", async () => {
   server = createFtpServer({
     port: cmdPortTCP,
     user: users,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(true)
       },

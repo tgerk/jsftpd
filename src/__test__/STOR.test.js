@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer } = require("../jsftpd.ts")
-const { getDataPort, ExpectSocket } = require("./utils")
+const { getDataPort, ExpectSocket, addFactoryExtensions } = require("./utils")
 const { Writable } = require("stream")
 
 jest.setTimeout(5000)
@@ -286,7 +286,7 @@ test("test STOR message with handler", async () => {
     port: 50021,
     user: users,
     minDataPort: dataPort,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(false)
       },
@@ -349,7 +349,7 @@ test("test STOR message with handler fails", async () => {
     port: 50021,
     user: users,
     minDataPort: dataPort,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(false)
       },

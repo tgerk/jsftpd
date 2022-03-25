@@ -1,6 +1,7 @@
 import util from "util"
 import path from "path"
 import fs from "fs/promises"
+import { existsSync, mkdirSync, rmSync } from "fs"
 
 import {
   FolderListFormat,
@@ -9,8 +10,28 @@ import {
   UserCredential,
 } from "../jsftpd"
 
-export default function ({
-  basefolder: baseFolder,
+const defaultBaseFolder = path.join(process.cwd(), "__ftproot__")
+
+function baseFolderExists(baseFolder: string = defaultBaseFolder) {
+  if (!existsSync(baseFolder)) {
+    if (baseFolder !== defaultBaseFolder) {
+      return false
+    }
+
+    mkdirSync(defaultBaseFolder) // may throw
+  }
+
+  return true
+}
+
+function baseFolderCleanup(baseFolder: string = defaultBaseFolder) {
+  if (baseFolder === defaultBaseFolder) {
+    rmSync(defaultBaseFolder, { force: true, recursive: true })
+  }
+}
+
+function fsPromisesBackend({
+  basefolder: baseFolder = defaultBaseFolder,
   username = "nobody",
   filenameTransform,
 }: {
@@ -64,7 +85,7 @@ export default function ({
   }
 
   // beware of a possible race conditions--when possible avoid status check in advance, respond to the specific rejection later
-  function folderExists(folder: string) {
+  function folderExists(folder = "") {
     return fs.stat(path.join(baseFolder, folder)).then(
       (fstat) => fstat.isDirectory(),
       () => false
@@ -84,7 +105,9 @@ export default function ({
         recursive: true,
       })
       .then((folder) => {
-        if (!folder) throw Object.assign(Error(""), { code: "EEXIST" })
+        if (!folder) throw Object.assign(Error(path.join(baseFolder, folder)), {
+          code: "EEXIST",
+        })
       })
   }
 
@@ -216,3 +239,9 @@ export default function ({
     fileSetTimes,
   }
 }
+
+export default Object.assign(fsPromisesBackend, {
+  baseFolderExists,
+  baseFolderCleanup,
+  defaultBaseFolder
+})

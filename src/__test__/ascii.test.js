@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { streamToAscii, streamFromAscii } = require("../ascii.ts")
+const { asciify, deasciify } = require("../ascii.ts")
 const { Readable, Writable } = require("stream")
 
 function getSink() {
@@ -21,7 +21,7 @@ test("test conversion *into* NVT-ASCII transport format", (done) => {
     done()
   })
 
-  streamToAscii(input).pipe(sink)
+  asciify(input).pipe(sink)
 })
 
 test("test conversion *from* NVT-ASCII transport format", (done) => {
@@ -33,5 +33,5 @@ test("test conversion *from* NVT-ASCII transport format", (done) => {
     done()
   })
 
-  streamFromAscii(input).pipe(sink)
+  deasciify(input).pipe(sink)
 })

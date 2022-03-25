@@ -1,13 +1,12 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const net = require("net")
 const tls = require("tls")
-const { PromiseSocket } = require("promise-socket")
 const {
   getCmdPortTCP,
   getDataPort,
   formatPort,
   ExpectSocket,
+  addFactoryExtensions
 } = require("./utils")
 
 jest.setTimeout(5000)
@@ -199,7 +198,7 @@ test("test MLSD message with handler", async () => {
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
-    store: () => ({ folderList }),
+    store: addFactoryExtensions({ folderList }),
   })
   server.start()
 

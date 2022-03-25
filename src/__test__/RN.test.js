@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer: createServer } = require("../jsftpd.ts")
-const { sleep, getDataPort, ExpectSocket } = require("./utils")
+const { sleep, getDataPort, ExpectSocket, addFactoryExtensions } = require("./utils")
 
 jest.setTimeout(5000)
 let server
@@ -146,7 +146,7 @@ test("test RNFR/RNTO message using handlers", async () => {
   server = createServer({
     port: 50021,
     user: users,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists(file) {
         return Promise.resolve(file === "mytestfile")
       },
@@ -192,7 +192,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   server = createServer({
     port: 50021,
     user: users,
-    store: () => ({
+    store: addFactoryExtensions({
       fileExists(file) {
         return Promise.resolve(file === "mytestfile")
       },

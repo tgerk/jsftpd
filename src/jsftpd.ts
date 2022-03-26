@@ -5,9 +5,10 @@
  * @license https://github.com/mailsvb/jsftpd/blob/main/LICENSE MIT License
  */
 
-import net, { Socket, AddressInfo, createServer } from "net"
-import tls, {
+import { Server, Socket, AddressInfo, createServer, connect } from "net"
+import {
   TlsOptions,
+  Server as TlsServer,
   TLSSocket,
   createServer as createSecureServer,
   createSecureContext,
@@ -19,150 +20,70 @@ import { EventEmitter } from "events"
 
 import Deferred from "./deferred"
 import { deasciify, asciify } from "./ascii"
-import localBackend, { FStat } from "./backends/local"
-import internalAuth from "./backends/auth"
+import internalAuth, {
+  AuthOptions,
+  LoginType,
+  Permissions,
+  Credential,
+} from "./auth"
+import localStore, { FStats } from "./store"
 
-export enum LoginType {
-  None,
-  Anonymous,
-  Password,
-  NoPassword,
-}
+type AuthHandlersFactory = typeof internalAuth
+type StoreHandlersFactory = typeof localStore
+type StoreHandlers = ReturnType<StoreHandlersFactory>
 
-export type anonPermissions =
-  | "allowAnonymousFileCreate"
-  | "allowAnonymousFileRetrieve"
-  | "allowAnonymousFileOverwrite"
-  | "allowAnonymousFileDelete"
-  | "allowAnonymousFileRename"
-  | "allowAnonymousFolderDelete"
-  | "allowAnonymousFolderCreate"
-
-export type AnonymousPermissions = {
-  [key in anonPermissions]?: boolean
-}
-
-export type userPermissions =
-  | "allowUserFolderCreate"
-  | "allowUserFolderDelete"
-  | "allowUserFileCreate"
-  | "allowUserFileRetrieve"
-  | "allowUserFileOverwrite"
-  | "allowUserFileRename"
-  | "allowUserFileDelete"
-
-export type UserPermissions = {
-  [key in userPermissions]?: boolean
-}
-
-export type FilenameTransformer = {
-  in: (file: string) => string
-  out: (file: string) => string
-}
-
-export type UserCredential = {
-  password?: string
-  basefolder?: string
-  allowLoginWithoutPassword?: boolean
-} & UserPermissions
-
-export interface AuthHandlers {
-  userLoginType(username: string): [LoginType, UserCredential?]
-  userAuthenticate(
-    username: string,
-    password: string
-  ): [LoginType, UserCredential?]
-}
-
-export interface StoreHandlers {
-  resolveFolder(folder: string): Promise<string>
-  resolveFile(file: string): Promise<string>
-
-  setFolder(folder: string): Promise<string>
-  getFolder(): string
-
-  folderExists: (folder?: string) => Promise<boolean>
-  folderCreate: (folder: string) => Promise<void>
-  folderDelete: (folder: string) => Promise<void>
-  folderList: (folder?: string) => Promise<FStat[]>
-
-  fileExists: (file: string) => Promise<boolean>
-  fileSize: (file: string) => Promise<number>
-  fileDelete: (file: string) => Promise<void>
-  fileRetrieve: (file: string, seek: number) => Promise<Readable>
-  fileStore: (file: string, seek: number) => Promise<Writable>
-  fileRename: (fromFile: string, toFile: string) => Promise<void>
-  fileSetTimes: (file: string, mtime: number) => Promise<void>
-}
-
-export type AuthOptions = {
-  allowAnonymousLogin?: boolean
-  username?: string
-  user?: ({ username: string } & UserCredential)[] // seems goofy to iterate an array when could map {[username]: credential}
-} & AnonymousPermissions &
-  UserCredential
-
-export type ConfigOptions = {
+export type ComposableAuthHandlerFactory = (
+  compose: AuthHandlersFactory
+) => AuthHandlersFactory
+export type ComposableStoreHandlerFactory = (
+  compose: StoreHandlersFactory
+) => StoreHandlersFactory
+export type ServerOptions = {
   port?: number
   securePort?: number
   maxConnections?: number
   minDataPort?: number
-} & AuthOptions
+  tls?: TlsOptions
+  auth?: ComposableAuthHandlerFactory
+  store?: ComposableStoreHandlerFactory
+}
 
 const defaultCert = Buffer.from(
   "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFb3dJQkFBS0NBUUVBdHpOM1dKdHE5MjAzYWQ0eFRxb2hHM3hLUVdvUnJFejArd3JTUnNhZitMQTQzSWQ4CjRWUUU0elpsaEhSRVJzSGJjQkdGd0dNTEwxaGJXTWc3eDErSFhKYXlxNXJwcldTZ1g4TVRwZllkN2RUNkxRT3oKdmdBTUx3WUJwM3VkYm5IM2tyUERQazBibWRDcTZ4RmxqaUR4bHB6dWxIN1Vqb2crRE1XYmdpVHFYU2YrUThZTwpXS2xVRXhMVzZ5L3hFNUNIVVN3ZGI3MWREc2pDSG90YWliTTNXdlpGdEc3MnAvUXBaWldtZmQreEQwL3VoVnhNCnBualR0S21xWlMwcnJZM3Y1SFR5dVpBMUJRMFBVWmV0NzdLdWZKUis2aVlzQjQ4Z3NSM0szNmd6WHoyMzRXUXUKbEppcWk0dXo4Wjk1LzQyZmJOUlR3eWxRZXBQY1Ruc0Rib0Y0Q1FJREFRQUJBb0lCQVFDanR1UmlWSkVraDM5TApwbm9kdUQ5WjFwcHRGcUt3ZlIwMzhwV3pGZkVEUmtlcUc1SG5zek9pOEl1TDhITExZSlgrOGttNmdVZ1BpVUFvCmVOZWk5YVY3Z2xnc3JvVkFwSG9FMmNtSE9BZks3OWFadjRNeXVjd3BnWTZjNHdUdkcvMklKZ2pHZGhYQ1FRMWMKZi9Gbkw5MTFJTXk3K3hOc1JDaGZOWUFncjJpWTBZOUpRQndncTlJM1BWZ1RGQUtkTTBKZ1hySzhXVCtsN3NDRQpWc0kyUkVnYUxzeUxud2VmYnRwbVV0ankrbWtLemIzcnNyY1JVVmJOZjB3aEFlTG9HS01wZjVPNVUzMVNjd2xwClB2RnpHWkUyM01HbHpheGpZVVJTVmV3TFlzR2dwNTg5SDF6WmZaQVhSRWRiOEx2MGYra0I5MSthUi9Hdy9IT3gKS3ZlVXEvTVpBb0dCQU9BQkhxWWdXNmFwM3BjMjZJNVdNNURrMnJ1TnArRENQbzJUV3RRTklwTlREMEorRWt6SgpMZ1ZEK0xGVWZmNDFTQlZEbWZXR2x3cnVtajdWWGtTbjZyWmZXQUVKYTBySkljdHV3TDcxQ1Y0Q280cnFsUGlpCnhEazdhUFpYSXJBcjdaOG5UOG1kVStmcENMS1FNVUhYY0wydDI0cE85NytFVGVycVVYcGtEQXVEQW9HQkFORmUKVitZYThuVGxjVVhkbktqQVU4czJNSlhUUFZkeDlIM3BzQjNOVjJtR2lmM1h2d2F6ei9mYTg5NG5Ha3FxS2N6cwppV1BLdlR0MytVdUwxSlhWSlcwMllycHpUMlpMd2lqY3pCQlc1OGtIeU9UUGZ4UENjemh1dGlQUHJoMnQwbGJtCkR6WFpuTzJPUlpJWlp3MFllVFlNVzFUcnZ3WnRpT0VxMFp4cVVkeURBb0dBYld0K21pMmlOMll3NmZLVFpMdnMKMG5GSCsyZTF3bzkvMk01TEJ0d25zSWxaSWVUTmNaNndFVGhqcWRPWSsrencraG9jZ1pldC9sUVJHbkpGYXdvUApGK2k0NTBDL25UZGtmNmZwRlI1QzVoNHAzdmk1cmo1cjFYMFV4NGhHMUlHUXdEYUd2ZmhRL1M2UzVnNlRVUk00CjZoNmI2QktzNkd0cldEMy9jT2FnRDVzQ2dZQXpwNHdXS0dYVE0xeHIrVTRTVUVrY0pNVjk0WDBMMndDUUpCeWcKYmEzNFNnbzNoNGdJdGtwRUExQVJhaUpSYzRRV20vRVZuc3BySnFGcDR4alMwcUNHUGxuRFdIbXBhbDEveVdITApValdqWW5sTkFtaCt6b1d3MFplOFpCdTRGTStGUXdOVHJObkx2a01wMVh5WVBZYUNNREJFVmxsdDA0NW14ektwCjNZMU8wd0tCZ0FHaVkyNVZLOGJyMVFydXlzM3Vhb21LQ3BYUmhjZU15eHdBazdxeUlpNnpHeEx3bnFaVldaQmQKbkcxbkFaT2JET1JSTGRBRktPZ2tncGtVbGgrTEE3dTRuUytGWEdteGtLZlF1cTNTcTNaWHhiTjMxcXBCcERHTQoxbE9QSlVWY2UxV3ZyeXcrWVI4M1VFQ0ZTOEZjeDdibEVEM3oyNnVOQnN0dlBwVTUrV3ZxCi0tLS0tRU5EIFJTQSBQUklWQVRFIEtFWS0tLS0tCi0tLS0tQkVHSU4gQ0VSVElGSUNBVEUtLS0tLQpNSUlDNGpDQ0FjcWdBd0lCQWdJSWJqQ2hhajZDT2Iwd0RRWUpLb1pJaHZjTkFRRUxCUUF3RVRFUE1BMEdBMVVFCkF4TUdhbk5tZEhCa01DQVhEVEl3TURFd01UQXdNREF3TUZvWUR6azVPVGt4TWpNeE1qTTFPVFU1V2pBUk1ROHcKRFFZRFZRUURFd1pxYzJaMGNHUXdnZ0VpTUEwR0NTcUdTSWIzRFFFQkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDMwpNM2RZbTJyM2JUZHAzakZPcWlFYmZFcEJhaEdzVFBUN0N0Skd4cC80c0RqY2gzemhWQVRqTm1XRWRFUkd3ZHR3CkVZWEFZd3N2V0Z0WXlEdkhYNGRjbHJLcm11bXRaS0Jmd3hPbDloM3QxUG90QTdPK0FBd3ZCZ0duZTUxdWNmZVMKczhNK1RSdVowS3JyRVdXT0lQR1duTzZVZnRTT2lENE14WnVDSk9wZEovNUR4ZzVZcVZRVEV0YnJML0VUa0lkUgpMQjF2dlYwT3lNSWVpMXFKc3pkYTlrVzBidmFuOUNsbGxhWjkzN0VQVCs2RlhFeW1lTk8wcWFwbExTdXRqZS9rCmRQSzVrRFVGRFE5Umw2M3ZzcTU4bEg3cUppd0hqeUN4SGNyZnFETmZQYmZoWkM2VW1LcUxpN1B4bjNuL2paOXMKMUZQREtWQjZrOXhPZXdOdWdYZ0pBZ01CQUFHalBEQTZNQXdHQTFVZEV3RUIvd1FDTUFBd0hRWURWUjBPQkJZRQpGQkRRdzE4NC91Qk5zMHlxczVqaU92dnd4TFBTTUFzR0ExVWREd1FFQXdJRjREQU5CZ2txaGtpRzl3MEJBUXNGCkFBT0NBUUVBaWdSa0draEMxeTVMendOQ0N1T0I5eUsyS2NkUGJhcm9lZGlSWVVxZmpVU2JsT3NweWFTNjEvQjgKVk9UdHZSRjBxZkJFZTVxZVhVUTRIV1JGSnRVZmQ1eisvZTRZNkJHVmR3eFJ5aktIYkVGQ3NpOFlFZDNHOTdaZwpWM1RFV08xVVlCTlJhN2tZajE2QXFDOWtXaG5WRVU3bUdRWE5nR1NJaDNNTmx5RG1RblBIdHdzS2d3cUs5VWcvCk9QVUhUNGlTa2h2OEVoTjYyUFlRaHBEaU1udWFQbUZ1bGVKbmllQnNFMTlvSVBtbWsxblRIZXRPZDg4VU1PeUEKWDFKY0ZBZXI2dmVPQkxVMUhRSEdtd1Iyalgzai83YzI3SjJFdjRQWW1rU2R2N0FYcm5LaENDeGRSblA2WDlGaApTYlEwRHBhbW5zaWFEWld4QzNuUks2LzVndXdlOHc9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
   "base64"
 )
-const TlsDefaults: TlsOptions = {
-  key: defaultCert,
-  cert: defaultCert,
-  honorCipherOrder: true,
-  rejectUnauthorized: false,
-}
-
-const ConfigDefaults: ConfigOptions = {
-  port: 21,
-  securePort: 990,
-  maxConnections: 10,
-  minDataPort: 1024,
-}
-
-export type AuthHandlersFactory = typeof internalAuth
-export type StoreHandlersFactory = typeof localBackend
 
 export function createFtpServer({
-  tls: tlsConfig,
+  tls,
   auth,
   store,
+  basefolder,
   ...options
-}: ConfigOptions & {
-  tls?: TlsOptions
-  auth?: (compose: AuthHandlersFactory) => AuthHandlersFactory
-  store?: (compose: StoreHandlersFactory) => StoreHandlersFactory
-} = {}): EventEmitter & { start(): void; stop(): void; cleanup(): void } {
-  let lastSessionKey = 0
-  const openSessions: Map<number, Socket> = new Map()
+}: ServerOptions & AuthOptions = {}) {
+  options = {
+    port: 21,
+    securePort: 990,
+    maxConnections: 10,
+    minDataPort: 1024,
+    ...options,
+  }
 
-  const config = {
-      ...ConfigDefaults,
-      ...options,
-      tls: {
-        ...TlsDefaults,
-        ...tlsConfig,
-      },
-    },
-    usingTLS = !!tlsConfig
+  const tlsConfig: TlsOptions = {
+    key: defaultCert,
+    cert: defaultCert,
+    honorCipherOrder: true,
+    rejectUnauthorized: false,
+    ...tls,
+  }
 
   // compose auth and storage backend handler factories
   const authBackend = auth?.(internalAuth) ?? internalAuth,
-    storeBackend = store?.(localBackend) ?? localBackend
+    { userLoginType, userAuthenticate } = authBackend(options)
 
-  // checks
-  if (!storeBackend.baseFolderExists(config.basefolder)) {
+  const storeBackend = store?.(localStore) ?? localStore
+  if (!storeBackend.baseFolderExists(basefolder)) {
     throw new Error("Basefolder must exist")
   }
-
-  const { userLoginType, userAuthenticate } = authBackend(config)
 
   // setup FTP on TCP
   const tcpServer = createServer()
@@ -171,54 +92,47 @@ export function createFtpServer({
     emitListenEvent("tcp", tcpServer.address() as AddressInfo)
   })
   tcpServer.on("connection", SessionHandler)
-  tcpServer.maxConnections = config.maxConnections
+  tcpServer.maxConnections = options.maxConnections
 
   // setup FTP on TLS
-  let tlsServer: tls.Server
-  if (usingTLS) {
-    tlsServer = createSecureServer(config.tls)
+  let tlsServer: TlsServer
+  if (tls) {
+    tlsServer = createSecureServer(tlsConfig)
     tlsServer.on("error", ServerErrorHandler)
     tlsServer.on("listening", function () {
       emitListenEvent("tls", tlsServer.address() as AddressInfo)
     })
     tlsServer.on("secureConnection", SessionHandler)
-    tlsServer.maxConnections = config.maxConnections
+    tlsServer.maxConnections = options.maxConnections
   }
+
+  // track client sessions
+  let lastSessionKey = 0
+  const openSessions: Map<number, Socket> = new Map()
 
   const emitter = new EventEmitter()
   return Object.assign(emitter, {
     start() {
-      tcpServer.listen(config.port)
-      usingTLS && tlsServer.listen(config.securePort)
+      tcpServer.listen(options.port)
+      tls && tlsServer.listen(options.securePort)
     },
 
     stop() {
-      for (const [key, session] of openSessions.entries()) {
+      for (const session of openSessions.values()) {
         session.destroy()
-        openSessions.delete(key)
       }
       tcpServer.close()
-      usingTLS && tlsServer.close()
+      tls && tlsServer.close()
     },
 
     cleanup() {
-      storeBackend.baseFolderCleanup(config.basefolder)
+      storeBackend.baseFolderCleanup(basefolder)
     },
   })
 
   function SessionHandler(cmdSocket: Socket | TLSSocket) {
     const socketKey = ++lastSessionKey
     openSessions.set(socketKey, cmdSocket)
-
-    let username = "nobody"
-    let authenticated = false
-    let allowUserFileCreate: boolean,
-      allowUserFileRetrieve: boolean,
-      allowUserFileOverwrite: boolean,
-      allowUserFileDelete: boolean,
-      allowUserFileRename: boolean,
-      allowUserFolderDelete: boolean,
-      allowUserFolderCreate: boolean
 
     let resolveFolder: StoreHandlers["resolveFolder"],
       resolveFile: StoreHandlers["resolveFile"],
@@ -236,15 +150,15 @@ export function createFtpServer({
       fileRename: StoreHandlers["fileRename"],
       fileSetTimes: StoreHandlers["fileSetTimes"]
 
-    let isEncrypted = "encrypted" in cmdSocket
-    let pbszReceived = false
-    let shouldProtect = false
+    let username = "nobody",
+      authenticated = false,
+      permissions: Permissions
 
-    let asciiOn = false
+    let asciiTxfrMode = false
+    let pbszReceived = false
+    let protectedMode = false
     let renameFileFrom = ""
     let dataOffset = 0
-
-    let passivePort: net.Server, dataSocket: Deferred<Socket | TLSSocket>
 
     const localAddr =
         cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown",
@@ -265,9 +179,7 @@ export function createFtpServer({
     emitDebugMessage(`established FTP connection`)
 
     function respond(
-      this: Socket & {
-        respond: (code: string, message: string, delimiter?: string) => void
-      },
+      this: Socket,
       code: string,
       message: string,
       delimiter = " "
@@ -277,6 +189,8 @@ export function createFtpServer({
     }
     let client = Object.assign(cmdSocket, { respond })
     client.respond("220", "Welcome")
+
+    let passivePort: Server, dataSocket: Deferred<Socket | TLSSocket>
 
     function CmdHandler(data: string) {
       interface FTPCommandTable {
@@ -344,13 +258,14 @@ export function createFtpServer({
       function USER(cmd: string, user: string) {
         username = user
         authenticated = false
-        const [loginType, userCredential] = userLoginType(username)
-        switch (loginType) {
-          case LoginType.NoPassword:
-            setUserRights(userCredential).then(() => {
-              emitLoginEvent()
+        switch (
+          userLoginType(username, (credential) =>
+            setUser(credential).then(() => {
               client.respond("232", "User logged in")
             })
+          )
+        ) {
+          case LoginType.NoPassword:
             break
           case LoginType.None:
             client.respond("530", "Not logged in")
@@ -364,16 +279,16 @@ export function createFtpServer({
        *  PASS
        */
       function PASS(cmd: string, password: string) {
-        const [loginType, userCredential] = userAuthenticate(username, password)
-        switch (loginType) {
-          case LoginType.Anonymous:
-            username = `anon(${password})`
-          case LoginType.NoPassword: // eslint-disable-line no-fallthrough
-          case LoginType.Password:
-            setUserRights(userCredential).then(() => {
-              emitLoginEvent()
+        switch (
+          userAuthenticate(username, password, (credential) =>
+            setUser(credential).then(() => {
               client.respond("230", "Logged on")
             })
+          )
+        ) {
+          case LoginType.Anonymous:
+          case LoginType.NoPassword: // eslint-disable-line no-fallthrough
+          case LoginType.Password:
             break
           default:
             client.respond("530", "Username or password incorrect")
@@ -382,23 +297,25 @@ export function createFtpServer({
       }
 
       /*
-       *  AUTH (switch protocol)
+       *  AUTH (upgrade command socket security)
        */
       function AUTH(cmd: string, auth: string) {
-        if (auth === "TLS" || auth === "SSL") {
-          client.respond("234", `Using authentication type ${auth}`)
-          cmdSocket = new TLSSocket(cmdSocket, {
-            secureContext: createSecureContext(config.tls),
-            isServer: true,
-          })
-          cmdSocket.on("secure", () => {
-            emitDebugMessage(`connection secured`)
-            client = Object.assign(cmdSocket, { respond })
-            isEncrypted = "encrypted" in cmdSocket
-          })
-          cmdSocket.on("data", CmdHandler)
-        } else {
-          client.respond("504", `Unsupported auth type ${auth}`)
+        switch (auth) {
+          case "TLS":
+          case "SSL":
+            client.respond("234", `Using authentication type ${auth}`)
+            cmdSocket = new TLSSocket(cmdSocket, {
+              secureContext: createSecureContext(tlsConfig),
+              isServer: true,
+            })
+            cmdSocket.on("secure", () => {
+              emitDebugMessage(`connection secured`)
+              client = Object.assign(cmdSocket, { respond })
+            })
+            cmdSocket.on("data", CmdHandler)
+            break
+          default:
+            client.respond("504", `Unsupported auth type ${auth}`)
         }
       }
 
@@ -419,11 +336,29 @@ export function createFtpServer({
       }
 
       /*
-       *  PBSZ
+       *  PBSZ (set protection buffer size, irrelevant to SSL private mode)
        */
       function PBSZ(cmd: string, size: string) {
         pbszReceived = true
         client.respond("200", `PBSZ=${size}`)
+      }
+
+      /*
+       *  PROT
+       */
+      function PROT(cmd: string, protection: string) {
+        if (!pbszReceived) {
+          client.respond("503", "PBSZ missing")
+        } else
+          switch (protection) {
+            case "P": // private, i.e. SSL
+            case "C": // clear
+              protectedMode = protection === "P"
+              client.respond("200", `Protection level is ${protection}`)
+              break
+            default:
+              client.respond("534", "Protection level must be C or P")
+          }
       }
 
       /*
@@ -437,22 +372,6 @@ export function createFtpServer({
           client.respond("200", "UTF8 OFF")
         } else {
           client.respond("451", "Not supported")
-        }
-      }
-
-      /*
-       *  PROT
-       */
-      function PROT(cmd: string, protection: string) {
-        if (pbszReceived === true) {
-          if (protection === "C" || protection === "P") {
-            shouldProtect = protection === "P"
-            client.respond("200", `Protection level is ${protection}`)
-          } else {
-            client.respond("534", "Protection level must be C or P")
-          }
-        } else {
-          client.respond("503", "PBSZ missing")
         }
       }
 
@@ -556,10 +475,10 @@ export function createFtpServer({
        */
       function TYPE(cmd: string, tfrType: string) {
         if (tfrType === "A") {
-          asciiOn = true
+          asciiTxfrMode = true
           client.respond("200", "Type set to ASCII")
         } else {
-          asciiOn = false
+          asciiTxfrMode = false
           client.respond("200", "Type set to BINARY")
         }
       }
@@ -569,7 +488,7 @@ export function createFtpServer({
        */
       function REST(cmd: string, arg: string) {
         const offset = parseInt(arg, 10)
-        if (offset > -1) {
+        if (offset >= 0) {
           dataOffset = offset
           client.respond("350", `Restarting at ${dataOffset}`)
         } else {
@@ -622,7 +541,7 @@ export function createFtpServer({
       function RMD(cmd: string, folder: string) {
         resolveFolder(folder).then(
           (folder) => {
-            if (!allowUserFolderDelete || folder === "/") {
+            if (!permissions.allowFolderDelete || folder === "/") {
               client.respond("550", "Permission denied")
             } else {
               folderExists(folder).then((isFolder) => {
@@ -653,7 +572,7 @@ export function createFtpServer({
        *  MKD
        */
       function MKD(cmd: string, folder: string) {
-        if (!allowUserFolderCreate) {
+        if (!permissions.allowFolderCreate) {
           client.respond("550", "Permission denied")
         } else {
           resolveFolder(folder).then(
@@ -740,7 +659,7 @@ export function createFtpServer({
        *  DELE
        */
       function DELE(cmd: string, file: string) {
-        if (!allowUserFileDelete) {
+        if (!permissions.allowFileDelete) {
           client.respond("550", "Permission denied")
         } else {
           resolveFile(file).then(
@@ -775,7 +694,7 @@ export function createFtpServer({
       function RETR(cmd: string, param: string) {
         resolveFile(param).then(
           (file) => {
-            if (!allowUserFileRetrieve) {
+            if (!permissions.allowFileRetrieve) {
               client.respond("550", `Transfer failed "${file}"`)
             } else {
               fileExists(file).then((isFile) => {
@@ -786,12 +705,15 @@ export function createFtpServer({
                     (writeSocket: Writable) =>
                       fileRetrieve(file, dataOffset)
                         .then((readStream) => {
-                          readStream.on("error", (error) => {
-                            // incomplete write
-                            emitLogMessage(error)
-                            writeSocket.destroy()
-                            client.respond("550", `Transfer failed "${file}"`)
-                          })
+                          readStream.on(
+                            "error",
+                            (error: NodeJS.ErrnoException) => {
+                              // incomplete write
+                              emitLogMessage(error)
+                              writeSocket.destroy()
+                              client.respond("550", `Transfer failed "${file}"`)
+                            }
+                          )
                           writeSocket.on("error", () => {
                             // incomplete write
                             readStream.destroy()
@@ -809,7 +731,7 @@ export function createFtpServer({
                               `Successfully transferred "${file}"`
                             )
                           })
-                          if (asciiOn) {
+                          if (asciiTxfrMode) {
                             readStream = asciify(readStream)
                           }
                           // transform or log outbound stream
@@ -841,7 +763,11 @@ export function createFtpServer({
         resolveFile(param).then(
           (file) =>
             fileExists(file).then((isFile) => {
-              if (isFile ? !allowUserFileOverwrite : !allowUserFileCreate) {
+              if (
+                isFile
+                  ? !permissions.allowFileOverwrite
+                  : !permissions.allowFileCreate
+              ) {
                 client.respond(
                   "550",
                   isFile ? "File already exists" : `Transfer failed "${file}"`
@@ -851,12 +777,15 @@ export function createFtpServer({
                   (readSocket: Readable) =>
                     fileStore(file, dataOffset)
                       .then((writeStream) => {
-                        writeStream.on("error", (error) => {
-                          // incomplete write
-                          emitLogMessage(error)
-                          readSocket.destroy()
-                          client.respond("550", `Transfer failed "${file}"`)
-                        })
+                        writeStream.on(
+                          "error",
+                          (error: NodeJS.ErrnoException) => {
+                            // incomplete write
+                            emitLogMessage(error)
+                            readSocket.destroy()
+                            client.respond("550", `Transfer failed "${file}"`)
+                          }
+                        )
                         readSocket.on("error", (error) => {
                           // incomplete upload
                           emitLogMessage(error)
@@ -872,7 +801,7 @@ export function createFtpServer({
                             `Successfully transferred "${file}"`
                           )
                         })
-                        if (asciiOn) {
+                        if (asciiTxfrMode) {
                           readSocket = deasciify(readSocket)
                         }
                         // transform or log inbound stream
@@ -904,7 +833,7 @@ export function createFtpServer({
             fileExists(file).then((isFile) => {
               if (!isFile) {
                 client.respond("550", "File does not exist")
-              } else if (!allowUserFileRename) {
+              } else if (!permissions.allowFileRename) {
                 client.respond("550", "Permission denied")
               } else {
                 renameFileFrom = path.relative(
@@ -925,7 +854,7 @@ export function createFtpServer({
        *  RNTO
        */
       function RNTO(cmd: string, file: string) {
-        if (!allowUserFileRename) {
+        if (!permissions.allowFileRename) {
           client.respond("550", "Permission denied")
         } else {
           resolveFile(file).then(
@@ -990,7 +919,7 @@ export function createFtpServer({
       }
     }
 
-    async function setUserRights(credential: UserCredential) {
+    function setUser(credential: Credential) {
       ;({
         resolveFolder,
         resolveFile,
@@ -1010,27 +939,20 @@ export function createFtpServer({
         fileStore,
         fileRename,
         fileSetTimes,
-      } = storeBackend({
-        basefolder: config.basefolder,
-        ...credential,
-        username,
-      }))
+      } = storeBackend(credential))
 
       return folderExists().then(
         () => {
-          ;({
-            allowUserFileCreate = false,
-            allowUserFileRetrieve = false,
-            allowUserFileOverwrite = false,
-            allowUserFileDelete = false,
-            allowUserFileRename = false,
-            allowUserFolderDelete = false,
-            allowUserFolderCreate = false,
-          } = credential)
+          ;({ username } = credential)
+          authenticated = true
+          permissions = credential
 
+          emitLoginEvent()
+          asciiTxfrMode = false
+          pbszReceived = false
+          protectedMode = false
           renameFileFrom = ""
           dataOffset = 0
-          authenticated = true
         },
         () => {
           throw Object.assign(
@@ -1058,8 +980,8 @@ export function createFtpServer({
         dataSocket.resolve(socket)
       }
 
-      if (isEncrypted && shouldProtect) {
-        passivePort = createSecureServer(config.tls)
+      if ("encrypted" in client && protectedMode) {
+        passivePort = createSecureServer(tlsConfig)
         passivePort.on("secureConnection", (socket) => {
           emitDebugMessage(`secure data connection established`)
           setupSocket(socket)
@@ -1068,10 +990,10 @@ export function createFtpServer({
         passivePort = createServer()
         passivePort.on("connection", (socket) => {
           emitDebugMessage(`data connection established`)
-          if (isEncrypted && shouldProtect) {
+          if ("encrypted" in client && protectedMode) {
             socket = new TLSSocket(socket, {
+              secureContext: createSecureContext(tlsConfig),
               isServer: true,
-              secureContext: createSecureContext(config.tls),
             })
             socket.on("secure", () => {
               emitDebugMessage(`data connection is secured`)
@@ -1098,7 +1020,7 @@ export function createFtpServer({
 
       function findAvailablePort() {
         return new Promise<number>((resolve, reject) => {
-          const { minDataPort, maxConnections } = config
+          const { minDataPort, maxConnections } = options
           if (minDataPort > 0 && minDataPort < 65535) {
             return checkAvailablePort(minDataPort)
           }
@@ -1131,17 +1053,21 @@ export function createFtpServer({
       }
 
       // defer initiating outbound connection
-      dataSocket = new Deferred<Socket | TLSSocket>(connect)
-      function connect(resolve: (value: Socket | TLSSocket) => void) {
+      dataSocket = new Deferred<Socket | TLSSocket>(makeDataConnection)
+      function makeDataConnection(
+        resolve: (value: Socket | TLSSocket) => void
+      ) {
         emitDebugMessage(
-          `connect to client data socket isSecure[${isEncrypted}] protection[${shouldProtect}] addr[${addr}] port[${port}]`
+          `connect to client data socket isSecure[${
+            "encrypted" in client
+          }] protection[${protectedMode}] addr[${addr}] port[${port}]`
         )
-        let socket = net.connect(port, addr, () => {
+        let socket = connect(port, addr, () => {
           emitDebugMessage(`data connection to ${addr}:${port} established`)
-          if (isEncrypted && shouldProtect) {
+          if ("encrypted" in client && protectedMode) {
             socket = new TLSSocket(socket, {
+              secureContext: createSecureContext(tlsConfig),
               isServer: true,
-              secureContext: createSecureContext(config.tls),
             })
             socket.on("secure", () => {
               emitDebugMessage(`data connection to ${addr}:${port} secured`)
@@ -1154,7 +1080,7 @@ export function createFtpServer({
         socket.on("error", SessionErrorHandler("active data socket"))
         socket.on("close", () => {
           // reset for subsequent connection
-          dataSocket = new Deferred<Socket | TLSSocket>(connect)
+          dataSocket = new Deferred<Socket | TLSSocket>(makeDataConnection)
         })
       }
     }
@@ -1247,7 +1173,7 @@ export function createFtpServer({
       protocol,
       address: (address as AddressInfo).address,
       port: (address as AddressInfo).port,
-      basefolder: config.basefolder || storeBackend.defaultBaseFolder,
+      basefolder: basefolder || storeBackend.defaultBaseFolder,
     })
   }
 
@@ -1268,9 +1194,9 @@ export default createFtpServer
 function formatListing(format = "LIST") {
   switch (format) {
     case "NLST":
-      return (fstat: FStat) => fstat.fname
+      return (fstat: FStats) => fstat.fname
     case "MLSD":
-      return (fstat: FStat) =>
+      return (fstat: FStats) =>
         util.format(
           "type=%s;modify=%s;%s %s",
           fstat.isDirectory() ? "dir" : "file",
@@ -1280,7 +1206,7 @@ function formatListing(format = "LIST") {
         )
     case "LIST":
     default:
-      return (fstat: FStat) =>
+      return (fstat: FStats) =>
         util.format(
           "%s 1 ? ? %s %s %s", // showing link-count = 1, don't expose uid, gid
           fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--",
@@ -1290,6 +1216,7 @@ function formatListing(format = "LIST") {
         )
   }
 }
+
 function getDateForLIST(mtime: Date): string {
   const now = new Date(mtime)
   const MM = [

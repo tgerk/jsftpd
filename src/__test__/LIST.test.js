@@ -137,10 +137,6 @@ test("test MLSD message over secure connection", async () => {
     "220 Welcome"
   )
 
-  expect(await cmdSocket.command("AUTH NONE").response()).toBe(
-    "504 Unsupported auth type NONE"
-  )
-
   expect(await cmdSocket.command("AUTH TLS").response()).toBe(
     "234 Using authentication type TLS"
   )

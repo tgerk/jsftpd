@@ -1,25 +1,22 @@
 import path from "path"
 import fs from "fs/promises"
 import { existsSync, mkdirSync, rmSync, Stats } from "fs"
+import { Readable, Writable } from "stream"
 
-import { UserCredential } from "../jsftpd"
+import { Credential } from "./auth"
 
-export type FStat = { fname: string } & Stats
+export type FStats = Stats & { fname: string }
 
 const defaultBaseFolder = path.join(process.cwd(), "__ftproot__")
 
 export default Object.assign(
-  function ({
-    basefolder: baseFolder = defaultBaseFolder,
-  }: UserCredential & {
-    username?: string
-  }) {
+  function ({ basefolder: baseFolder = defaultBaseFolder }: Credential) {
     baseFolder = path.join(baseFolder)
-    
+
     let currentFolder = "/"
 
-    // beware of a possible race conditions--advance status check is ambiguous, expect error condition later
-    function folderExists(folder = "") {
+    // advance status check is inconclusive, check error condition later
+    function folderExists(folder = ""): Promise<boolean> {
       return fs.stat(path.join(baseFolder, folder)).then(
         (fstat) => fstat.isDirectory(),
         () => false
@@ -27,7 +24,7 @@ export default Object.assign(
     }
 
     return {
-      setFolder(folder: string) {
+      setFolder(folder: string): Promise<string> {
         return folderExists(folder).then((isDirectory) => {
           if (isDirectory) {
             // check user access?
@@ -39,7 +36,7 @@ export default Object.assign(
         })
       },
 
-      getFolder() {
+      getFolder(): string {
         return currentFolder
       },
 
@@ -48,24 +45,24 @@ export default Object.assign(
           folder.charAt(0) === "/"
             ? path.join(baseFolder, folder)
             : path.join(baseFolder, currentFolder, folder)
-        return new Promise((resolve) => {  
+        return new Promise((resolve) => {
           if (folder.startsWith(baseFolder)) {
             resolve("/" + path.relative(baseFolder, folder))
-          }  
+          }
           resolve("/") // no jailbreak!
-        })  
-      },  
+        })
+      },
 
       folderExists,
 
-      folderDelete(folder: string) {
+      folderDelete(folder: string): Promise<void> {
         return fs.rm(path.join(baseFolder, folder), {
           force: true,
           recursive: true,
         })
       },
 
-      folderCreate(folder: string) {
+      folderCreate(folder: string): Promise<void> {
         return fs
           .mkdir(path.join(baseFolder, folder), {
             recursive: true,
@@ -79,7 +76,7 @@ export default Object.assign(
           })
       },
 
-      folderList(folder = "") {
+      folderList(folder = ""): Promise<FStats[]> {
         return fs
           .readdir(path.join(baseFolder, currentFolder, folder), {
             withFileTypes: true,
@@ -111,25 +108,25 @@ export default Object.assign(
         })
       },
 
-      // beware of a possible race conditions--advance status check is ambiguous, expect error condition later
-      fileExists(file: string) {
+      // advance status check is inconclusive, check error condition later
+      fileExists(file: string): Promise<boolean> {
         return fs.stat(path.join(baseFolder, currentFolder, file)).then(
           (fstat) => fstat.isFile(),
           () => false
         )
       },
 
-      fileSize(file: string) {
+      fileSize(file: string): Promise<number> {
         return fs
           .stat(path.join(baseFolder, currentFolder, file))
           .then((fstat) => fstat.size)
       },
 
-      fileDelete(file: string) {
+      fileDelete(file: string): Promise<void> {
         return fs.unlink(path.join(baseFolder, currentFolder, file))
       },
 
-      fileRetrieve(file: string, seek: number) {
+      fileRetrieve(file: string, seek: number): Promise<Readable> {
         return fs
           .open(path.join(baseFolder, currentFolder, file), "r")
           .then((fd) =>
@@ -146,7 +143,7 @@ export default Object.assign(
           )
       },
 
-      fileStore(file: string, seek: number) {
+      fileStore(file: string, seek: number): Promise<Writable> {
         return fs
           .open(
             path.join(baseFolder, currentFolder, file),
@@ -161,14 +158,14 @@ export default Object.assign(
           )
       },
 
-      fileRename(fromFile: string, toFile: string) {
+      fileRename(fromFile: string, toFile: string): Promise<void> {
         return fs.rename(
           path.join(baseFolder, fromFile), // NOTE:  fromFile is relative to baseFolder, not currentFolder
           path.join(baseFolder, currentFolder, toFile)
         )
       },
 
-      fileSetTimes(file: string, mtime: number) {
+      fileSetTimes(file: string, mtime: number): Promise<void> {
         return fs.utimes(
           path.join(baseFolder, currentFolder, file),
           mtime,

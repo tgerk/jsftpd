@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer } = require("../jsftpd.ts")
-const { getDataPort, sleep, ExpectSocket, addFactoryExtensions } = require("./utils")
+const {
+  getDataPort,
+  sleep,
+  ExpectSocket,
+  addFactoryExtensions,
+} = require("./utils")
 const { Writable } = require("stream")
 
 jest.setTimeout(5000)
@@ -134,7 +139,7 @@ test("test STOR message failes due to socket timeout", async () => {
     port: 50021,
     user: users,
     minDataPort: dataPort,
-    timeout: 3000
+    timeout: 3000,
   })
   server.start()
 

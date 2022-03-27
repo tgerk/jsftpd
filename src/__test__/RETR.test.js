@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer: createServer } = require("../jsftpd.ts")
+const { createFtpServer } = require("../jsftpd.ts")
 const {
   getCmdPortTCP,
   getDataPort,
@@ -33,7 +33,7 @@ test("test RETR message not allowed", async () => {
       allowUserFileRetrieve: false,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -80,7 +80,7 @@ test("test RETR message", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -140,7 +140,7 @@ test("test RETR message with ASCII", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -231,7 +231,7 @@ test("test RETR message with handler", async () => {
     )
   )
 
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -315,7 +315,7 @@ test("test RETR message with handler fails", async () => {
       })
     )
   )
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -381,7 +381,7 @@ test("test RETR message no active or passive mode", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     store: addFactoryExtensions({

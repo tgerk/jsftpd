@@ -30,6 +30,18 @@ function getDataPort() {
   return parseInt(NODE_MAJOR_VERSION + "120")
 }
 
+class ExpectServer extends PromiseSocket {
+  constructor(server) {
+    super(server ?? net.createServer())
+  }
+  listen(port, address) {
+    return this.stream.listen(port, address)
+  }
+  close() {
+    return this.stream.close()
+  }
+}
+
 class ExpectSocket extends PromiseSocket {
   constructor(socket) {
     super(socket ?? new net.Socket())
@@ -70,6 +82,7 @@ module.exports = {
   getCmdPortTCP,
   getCmdPortTLS,
   getDataPort,
+  ExpectServer,
   ExpectSocket,
   addFactoryExtensions,
 }

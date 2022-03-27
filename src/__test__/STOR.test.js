@@ -31,7 +31,7 @@ test("test STOR message without permission", async () => {
       allowUserFileCreate: false,
     },
   ]
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -70,7 +70,7 @@ test("test STOR message", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -135,7 +135,7 @@ test("test STOR message failes due to socket timeout", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -173,7 +173,7 @@ test("test STOR message with ASCII", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -244,7 +244,7 @@ test("test STOR message overwrite not allowed", async () => {
       allowUserFileOverwrite: false,
     },
   ]
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -324,7 +324,7 @@ test("test STOR message with handler", async () => {
     )
   )
 
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -387,7 +387,7 @@ test("test STOR message with handler fails", async () => {
     )
   )
 
-  server = createFtpServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,

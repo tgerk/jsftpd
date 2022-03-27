@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer: createServer } = require("../jsftpd.ts")
+const { createFtpServer } = require("../jsftpd.ts")
 const { getCmdPortTCP, formatPort, ExpectSocket } = require("./utils")
 
 jest.setTimeout(5000)
@@ -24,7 +24,7 @@ test("test PASV message takes next free port", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: cmdPortTCP,
@@ -66,7 +66,7 @@ test("test PASV message fails port unavailable", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: cmdPortTCP,
@@ -97,7 +97,7 @@ test("test PASV message fails port range fails", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: 70000,
@@ -128,7 +128,7 @@ test("test EPSV message takes next free port", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: cmdPortTCP,
@@ -167,7 +167,7 @@ test("test EPSV message fails port unavailable", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: cmdPortTCP,

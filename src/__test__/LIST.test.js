@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer: createServer } = require("../jsftpd.ts")
+const { createFtpServer } = require("../jsftpd.ts")
 const tls = require("tls")
 const {
   getCmdPortTCP,
@@ -33,7 +33,7 @@ test("test LIST message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -79,7 +79,7 @@ test("test MLSD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -125,7 +125,7 @@ test("test MLSD message over secure connection", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -189,7 +189,7 @@ test("test MLSD message with handler", async () => {
     },
   ]
   const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
-  server = createServer({
+  server = await createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,

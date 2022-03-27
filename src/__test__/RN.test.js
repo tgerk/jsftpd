@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer: createServer } = require("../jsftpd.ts")
+const { createFtpServer } = require("../jsftpd.ts")
 const {
   sleep,
   getDataPort,
@@ -30,7 +30,7 @@ test("test RNFR message file does not exist", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -77,7 +77,7 @@ test("test RNFR/RNTO message", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -148,7 +148,7 @@ test("test RNFR/RNTO message using handlers", async () => {
   const fileRename = jest
     .fn()
     .mockImplementationOnce(() => Promise.resolve(true))
-  server = createServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     store: addFactoryExtensions({
@@ -194,7 +194,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   const fileRename = jest
     .fn()
     .mockImplementationOnce(() => Promise.reject(Error("mock")))
-  server = createServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     store: addFactoryExtensions({
@@ -238,7 +238,7 @@ test("test RNFR/RNTO message file already exists", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = createServer({
+  server = await createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,

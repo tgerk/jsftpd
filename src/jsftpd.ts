@@ -8,7 +8,7 @@
 
 import { Server, Socket, AddressInfo, createServer, connect } from "net"
 import {
-  TlsOptions,
+  SecureContextOptions,
   Server as TlsServer,
   TLSSocket,
   createServer as createSecureServer,
@@ -49,13 +49,14 @@ export type ServerOptions = {
   maxConnections?: number
   timeout?: number
   dataTimeout?: number
-  tls?: TlsOptions
+  // overlooks misc options for TLS servers and TLS client/server sockets, e.g. session resume, OCSP, pre-shared keys
+  tls?: SecureContextOptions // excludes CommonConnectionOptions, e.g. client certificates and SNI
   auth?: ComposableAuthHandlerFactory
   store?: ComposableStoreHandlerFactory
 }
 
 export async function createFtpServer({
-  tls,
+  tls: tlsOptions,
   auth,
   store,
   basefolder,
@@ -63,22 +64,24 @@ export async function createFtpServer({
 }: ServerOptions & AuthOptions = {}) {
   options = {
     port: 21,
-    securePort: 990,
     minDataPort: 1024,
     maxConnections: 10,
     ...options,
   }
 
-  // TODO: parameterize certFile, keyFile
-  // TODO: generate self-signed cert on-the-fly and as-needed
-  const { default: defaultCert } = await import("./cert"),
-    tlsConfig: TlsOptions = {
-      key: defaultCert,
-      cert: defaultCert,
-      honorCipherOrder: true,
-      rejectUnauthorized: false,
-      ...tls,
-    }
+  tlsOptions = {
+    honorCipherOrder: true,
+    // rejectUnauthorized: false, // enforce CA trust
+    ...tlsOptions,
+  }
+  if (!("key" in tlsOptions) || !("cert" in tlsOptions)) {
+    // TODO: accept parameters certFile, keyFile
+    const { default: defaultCert } = await import("./cert")
+    tlsOptions.key = tlsOptions.cert = defaultCert
+  }
+
+  const tlsContext = createSecureContext(tlsOptions),
+    useTls = "securePort" in options
 
   // compose auth and storage backend handler factories
   const authBackend = auth?.(internalAuth) ?? internalAuth,
@@ -90,25 +93,23 @@ export async function createFtpServer({
   }
 
   // setup FTP on TCP
-  const tcpServer = createServer()
+  const tcpServer = createServer(SessionHandler)
   tcpServer.on("error", ServerErrorHandler)
   tcpServer.on("listening", () => {
     emitListenEvent("tcp", tcpServer.address() as AddressInfo)
   })
-  tcpServer.on("connection", SessionHandler)
 
   // concurrent connections, distinct from the listen backlog, excess connections are immediately closed
   tcpServer.maxConnections = options.maxConnections
 
   // setup FTP on TLS
   let tlsServer: TlsServer
-  if (tls) {
-    tlsServer = createSecureServer(tlsConfig)
+  if (useTls) {
+    tlsServer = createSecureServer(tlsOptions, SessionHandler)
     tlsServer.on("error", ServerErrorHandler)
     tlsServer.on("listening", function () {
       emitListenEvent("tls", tlsServer.address() as AddressInfo)
     })
-    tlsServer.on("secureConnection", SessionHandler)
 
     // concurrent connections, distinct from the listen backlog, excess connections are immediately closed
     tlsServer.maxConnections = options.maxConnections
@@ -122,7 +123,7 @@ export async function createFtpServer({
   return Object.assign(emitter, {
     start() {
       tcpServer.listen(options.port)
-      tls && tlsServer.listen(options.securePort)
+      useTls && tlsServer.listen(options.securePort)
     },
 
     stop() {
@@ -130,7 +131,7 @@ export async function createFtpServer({
         session.destroy()
       }
       tcpServer.close()
-      tls && tlsServer.close()
+      useTls && tlsServer.close()
     },
 
     cleanup() {
@@ -321,11 +322,11 @@ export async function createFtpServer({
           case "SSL":
             client.respond("234", `Using authentication type ${auth}`)
             cmdSocket = new TLSSocket(cmdSocket, {
-              secureContext: createSecureContext(tlsConfig),
+              secureContext: tlsContext,
               isServer: true,
             })
             cmdSocket.on("secure", () => {
-              emitDebugMessage(`connection secured`)
+              emitDebugMessage(`command connection secured`)
               client = Object.assign(cmdSocket, { respond })
             })
             cmdSocket.on("data", CmdHandler)
@@ -1003,22 +1004,23 @@ export async function createFtpServer({
       }
 
       if ("encrypted" in client && protectedMode) {
-        passivePort = createSecureServer(tlsConfig)
-        passivePort.on("secureConnection", (socket) => {
-          emitDebugMessage(`secure data connection established`)
-          setupSocket(socket)
-        })
+        passivePort = createSecureServer(
+          tlsOptions,
+          (socket) => {
+            emitDebugMessage(`secure data connection established`)
+            setupSocket(socket)
+          }
+        )
       } else {
-        passivePort = createServer()
-        passivePort.on("connection", (socket) => {
+        passivePort = createServer((socket) => {
           emitDebugMessage(`data connection established`)
           if ("encrypted" in client && protectedMode) {
             socket = new TLSSocket(socket, {
-              secureContext: createSecureContext(tlsConfig),
+              secureContext: tlsContext,
               isServer: true,
             })
             socket.on("secure", () => {
-              emitDebugMessage(`data connection is secured`)
+              emitDebugMessage(`data connection secured`)
               setupSocket(socket)
             })
           } else {
@@ -1041,11 +1043,13 @@ export async function createFtpServer({
       )
 
       /**
-       * maxConnections is the size of a block of ports for incoming data connections
-       * This is necessary for firewalls that can open a port-range, & maybe associated
-       *  and contingent on connection to the FTP port
-       * TODO: if minDataPort is not set, just listen on a random port ...ffs
+       * 'maxConnections' is the size of a block of ports for incoming data connections
+       * This is necessary for firewalls that can relate connections to port-range to
+       *  the FTP port (TODO:) If minDataPort is not set, NBD: just listen on a random port
        * if TCP and TLS ports are both listening, may need double maxConnections?
+       * TODO: this port scanning is an embarrassment:
+       *  keep a inc/dec connection count if minDataPort is not specified
+       *  else keep list of available ports in a push/pop array
        */
       function findAvailablePort() {
         return new Promise<number>((resolve, reject) => {
@@ -1105,15 +1109,15 @@ export async function createFtpServer({
           emitDebugMessage(`data connection to ${addr}:${port} established`)
           if ("encrypted" in client && protectedMode) {
             socket = new TLSSocket(socket, {
-              secureContext: createSecureContext(tlsConfig),
+              secureContext: tlsContext,
               isServer: true,
             })
             socket.on("secure", () => {
               emitDebugMessage(`data connection to ${addr}:${port} secured`)
-              setupSocket(socket) // data connection resolved
+              setupSocket(socket)
             })
           } else {
-            setupSocket(socket) // data connection resolved
+            setupSocket(socket)
           }
         })
         socket.on("error", SessionErrorHandler("active data socket"))

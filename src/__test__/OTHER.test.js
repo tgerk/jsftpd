@@ -66,11 +66,24 @@ test("create ftpd instance without options created with default values", async (
   }).rejects.toThrow("ECONNREFUSED")
 })
 
+test("connect to secure ftp server", async () => {
+  server = await createFtpServer({
+    securePort: cmdPortTLS,
+  })
+  server.start()
+
+  const cmdSocket = new ExpectSocket(
+    new tls.connect(cmdPortTLS, localhost, { rejectUnauthorized: false })  // accept self-signed server cert
+  )
+  expect(await cmdSocket.response()).toBe("220 Welcome")
+
+  await cmdSocket.end()
+})
+
 test("ftp server can be started on non default ports", async () => {
   server = await createFtpServer({
     port: cmdPortTCP + 2,
     securePort: cmdPortTLS + 2,
-    tls: { rejectUnauthorized: false },
   })
   // expect(server._opt.cnf.port).toBe(cmdPortTCP)
   // expect(server._opt.cnf.securePort).toBe(cmdPortTLS)
@@ -917,6 +930,7 @@ test("test SIZE message", async () => {
   await cmdSocket.end()
 })
 
+// TODO: test AUTH after login
 test("test AUTH message", async () => {
   const users = [
     {
@@ -941,10 +955,8 @@ test("test AUTH message", async () => {
   )
 
   cmdSocket = new ExpectSocket(
-    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false })
+    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false }) // accept self-signed server cert
   )
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  cmdSocket.stream.once("secureConnect", function () {})
 
   expect(await cmdSocket.command("USER john").response()).toBe(
     "232 User logged in"

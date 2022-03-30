@@ -142,10 +142,8 @@ test("test MLSD message over secure connection", async () => {
   )
 
   cmdSocket = new ExpectSocket(
-    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false })
+    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false }) // accept self-signed server cert
   )
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  cmdSocket.stream.once("secureConnect", function () {})
 
   expect(await cmdSocket.command("USER john").response()).toBe(
     "232 User logged in"
@@ -162,10 +160,8 @@ test("test MLSD message over secure connection", async () => {
   )
 
   let dataSocket = new ExpectSocket(
-    new tls.connect(dataPort, localhost, { rejectUnauthorized: false })
+    new tls.connect(dataPort, localhost, { rejectUnauthorized: false }) // accept self-signed server cert
   )
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  await dataSocket.stream.once("secureConnect", function () {})
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
     "150 Awaiting passive connection"

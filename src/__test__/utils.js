@@ -46,8 +46,7 @@ class ExpectSocket extends PromiseSocket {
   constructor(socket) {
     super(socket ?? new net.Socket())
   }
-  connect(port, host, encoding) {
-    if (encoding) this.stream.setEncoding(encoding)
+  connect(port, host) {
     this.stream.connect(port, host)
     return this
   }

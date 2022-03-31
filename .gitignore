@@ -109,3 +109,6 @@ tmp/
 # typescript output
 /lib
 
+# self-signed certs
+server.crt
+server.key

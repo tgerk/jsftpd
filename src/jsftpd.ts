@@ -33,6 +33,7 @@ import localStore, {
   StoreHandlers,
   FStats,
 } from "./store"
+import { readFileSync } from "fs"
 
 export type ComposableAuthHandlerFactory = (
   factory: AuthHandlersFactory
@@ -74,10 +75,23 @@ export async function createFtpServer({
     // rejectUnauthorized: false, // enforce CA trust
     ...tlsOptions,
   }
+  
+  // because we implement FTPS (via AUTH TLS), but not necessarily SFTP (default port 990)
+  //  use certs module to provide a backup self-signed certificate
   if (!("key" in tlsOptions) || !("cert" in tlsOptions)) {
-    // TODO: accept parameters certFile, keyFile
-    const { default: defaultCert } = await import("./cert")
-    tlsOptions.key = tlsOptions.cert = defaultCert
+    const { cert, key } = await import("./cert")
+    tlsOptions.cert = cert
+    tlsOptions.key = key
+  } else {
+    if (tlsOptions.cert.toString().startsWith("file:")) {
+      tlsOptions.cert = readFileSync(tlsOptions.cert.toString().substring(5))
+    }
+    if (tlsOptions.key.toString().startsWith("file:")) {
+      tlsOptions.key = readFileSync(tlsOptions.key.toString().substring(5))
+    }
+    if (tlsOptions.passphrase.startsWith("file:")) {
+      tlsOptions.passphrase = readFileSync(tlsOptions.passphrase.substring(5)).toString()
+    }
   }
 
   const tlsContext = createSecureContext(tlsOptions),
@@ -1004,13 +1018,10 @@ export async function createFtpServer({
       }
 
       if ("encrypted" in client && protectedMode) {
-        passivePort = createSecureServer(
-          tlsOptions,
-          (socket) => {
-            emitDebugMessage(`secure data connection established`)
-            setupSocket(socket)
-          }
-        )
+        passivePort = createSecureServer(tlsOptions, (socket) => {
+          emitDebugMessage(`secure data connection established`)
+          setupSocket(socket)
+        })
       } else {
         passivePort = createServer((socket) => {
           emitDebugMessage(`data connection established`)

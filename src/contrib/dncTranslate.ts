@@ -17,18 +17,19 @@ function transformInbound(file: string): string {
   return path.join(dir, dncForm ? `${dncForm[1]}.nc` : base)
 }
 
-export default function composableFactory(factory: StoreHandlersFactory): StoreHandlersFactory {
+export default function composableFactory(
+  factory: StoreHandlersFactory
+): StoreHandlersFactory {
   function composedFactory(user: Credential): StoreHandlers {
-    
     // TODO: munge the user's credential here
-    
+
     const handlers = factory(user),
       {
         // planning to decorate these functions:
         folderList: origListFolder,
-        resolveFile: origResolveFile
+        resolveFile: origResolveFile,
       } = handlers
-    
+
     // display on-disk ####.nc files with DNC-style O#### names
     function folderList(folder: string) {
       return origListFolder(folder).then((stats) =>
@@ -39,8 +40,8 @@ export default function composableFactory(factory: StoreHandlersFactory): StoreH
         )
       )
     }
-    
-      // resolve name from DNC-style O#### to on-disk ####.nc format
+
+    // resolve name from DNC-style O#### to on-disk ####.nc format
     function resolveFile(file: string) {
       return origResolveFile(transformInbound(file))
     }
@@ -53,4 +54,3 @@ export default function composableFactory(factory: StoreHandlersFactory): StoreH
 
   return Object.assign(composedFactory, factory)
 }
-    

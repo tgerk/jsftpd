@@ -75,7 +75,7 @@ export async function createFtpServer({
     // rejectUnauthorized: false, // enforce CA trust
     ...tlsOptions,
   }
-  
+
   // because we implement FTPS (via AUTH TLS), but not necessarily SFTP (default port 990)
   //  use certs module to provide a backup self-signed certificate
   if (!("key" in tlsOptions) || !("cert" in tlsOptions)) {
@@ -90,7 +90,9 @@ export async function createFtpServer({
       tlsOptions.key = readFileSync(tlsOptions.key.toString().substring(5))
     }
     if (tlsOptions.passphrase.startsWith("file:")) {
-      tlsOptions.passphrase = readFileSync(tlsOptions.passphrase.substring(5)).toString()
+      tlsOptions.passphrase = readFileSync(
+        tlsOptions.passphrase.substring(5)
+      ).toString()
     }
   }
 
@@ -1119,7 +1121,7 @@ export async function createFtpServer({
               `data connection authorized ${(socket as TLSSocket).authorized}`
             )
           }
-          
+
           if ("dataTimeout" in options || "timeout" in options) {
             socket.setTimeout(options.dataTimeout || options.timeout, () => {
               socket.destroy()
@@ -1128,7 +1130,7 @@ export async function createFtpServer({
 
           resolve(socket)
         })
-        
+
         socket.on("error", SessionErrorHandler("active data socket"))
         socket.on("close", () => {
           // reset for subsequent connection

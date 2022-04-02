@@ -144,7 +144,8 @@ export default function ({
       } else if (users?.length > 0) {
         const user = users.find(
           ({ username: user, password: pass, allowLoginWithoutPassword }) =>
-            user === username && (pass === password || allowLoginWithoutPassword)
+            user === username &&
+            (pass === password || allowLoginWithoutPassword)
         )
         if (user) {
           onAuthenticated(getCredentialForUser(username, user, config))

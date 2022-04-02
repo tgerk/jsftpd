@@ -472,14 +472,16 @@ test("test STOR over secure passive connection", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-const dataSocket = new ExpectSocket()
+  const dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
     "150 Awaiting passive connection"
   )
 
-  await dataSocket.startTLS({ rejectUnauthorized: false }).send("SOMETESTCONTENT")
+  await dataSocket
+    .startTLS({ rejectUnauthorized: false })
+    .send("SOMETESTCONTENT")
 
   expect(await cmdSocket.response()).toMatch(
     '226 Successfully transferred "mytestfile"'
@@ -513,7 +515,7 @@ test("test STOR over active secure connection", async () => {
   )
 
   cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
-  
+
   expect(await cmdSocket.command("USER john").response()).toBe(
     "232 User logged in"
   )

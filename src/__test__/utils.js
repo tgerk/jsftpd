@@ -33,7 +33,7 @@ function getDataPort() {
 
 class ExpectServer {
   constructor(server) {
-    this.server = (server ?? net.createServer({ backlog: 0 }))
+    this.server = server ?? net.createServer({ backlog: 0 })
     this.server.maxConnections = 1
   }
   listen(port, address) {
@@ -67,9 +67,7 @@ class ExpectSocket extends PromiseSocket {
     return this
   }
   startTLS(options) {
-    return new ExpectSocket(
-      tls.connect({ socket: this.stream, ...options})
-    )
+    return new ExpectSocket(tls.connect({ socket: this.stream, ...options }))
   }
   command(cmd) {
     this.write(cmd)

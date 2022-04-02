@@ -12,21 +12,12 @@ import { existsSync, readFileSync } from "fs"
 
 if (!existsSync("server.crt") || !existsSync("server.key")) {
   // one-shot self-signed cert:
-  execFileSync("openssl", [
-    "req",
-    "-nodes",
-    "-newkey",
-    "rsa:2048",
-    "-keyout",
-    "server.key",
-    "-subj",
-    "/CN=dncftpd",
-    "-x509",
-    "-days",
-    "1825",
-    "-out",
-    "server.crt",
-  ])
+  execFileSync(
+    "openssl",
+    "req -nodes -newkey rsa:2048 -keyout server.key -subj /CN=dncftpd -x509 -days 1825 -out server.crt".split(
+      " "
+    )
+  )
 }
 
 export const key = readFileSync("server.key")

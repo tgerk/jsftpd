@@ -292,7 +292,7 @@ export async function createFtpServer({
         username = user
         authenticated = false
         switch (
-          userLoginType(username, (credential) =>
+          userLoginType(client, username, (credential) =>
             setUser(credential).then(() => {
               client.respond("232", "User logged in")
             })
@@ -313,7 +313,7 @@ export async function createFtpServer({
        */
       function PASS(cmd: string, password: string) {
         switch (
-          userAuthenticate(username, password, (credential) =>
+          userAuthenticate(client, username, password, (credential) =>
             setUser(credential).then(() => {
               client.respond("230", "Logged on")
             })
@@ -982,7 +982,7 @@ export async function createFtpServer({
         fileStore,
         fileRename,
         fileSetTimes,
-      } = storeBackend(credential))
+      } = storeBackend(credential, client))
 
       return folderExists().then(
         () => {

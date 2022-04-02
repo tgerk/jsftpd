@@ -1,4 +1,6 @@
 import path from "path"
+import { Socket } from "net"
+import { TLSSocket } from "tls"
 import fs from "fs/promises"
 import { existsSync, mkdirSync, rmSync, Stats } from "fs"
 import { Readable, Writable } from "stream"
@@ -49,15 +51,19 @@ export interface StoreHandlers {
   fileSetTimes(file: string, mtime: number): Promise<void>
 }
 
-export type StoreHandlersFactory = ((user: Credential) => StoreHandlers) & {
+export type StoreHandlersFactory = ((
+  user: Credential,
+  client: Socket | TLSSocket
+) => StoreHandlers) & {
   baseFolder(folder: string): string
   baseFolderExists(folder: string): boolean
   baseFolderCleanup(folder: string): void
 }
 
-function localStoreFactory({
-  basefolder: baseFolder = defaultBaseFolder,
-}: Credential): StoreHandlers {
+function localStoreFactory(
+  { basefolder: baseFolder = defaultBaseFolder }: Credential,
+  _client: Socket | TLSSocket
+): StoreHandlers {
   baseFolder = path.join(baseFolder)
 
   let currentFolder = "/"

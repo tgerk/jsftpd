@@ -1,23 +1,21 @@
 {
-    "env": {
-        "browser": true,
-        "commonjs": true,
-        "es2021": true,
-        "jest/globals": true
-    },
-    "parser": "@typescript-eslint/parser",
-    "plugins": [
-        "@typescript-eslint",
-        "jest"
-    ],
-    "extends": [
-        "eslint:recommended", 
-        "plugin:@typescript-eslint/recommended",
-        "prettier"
-    ],
-    "parserOptions": {
-        "ecmaVersion": 12
-    },
-    "rules": {
-    }
+  "env": {
+    "browser": true,
+    "commonjs": true,
+    "es2021": true,
+    "jest/globals": true
+  },
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint", "jest"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "prettier"
+  ],
+  "parserOptions": {
+    "ecmaVersion": 12
+  },
+  "rules": {
+    "@typescript-eslint/no-unused-vars": [ "warn", { "argsIgnorePattern": "^_" } ]
+  }
 }

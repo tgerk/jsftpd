@@ -1,3 +1,6 @@
+import { Socket } from "net"
+import { TLSSocket } from "tls"
+
 enum permissions {
   FileCreate,
   FileRetrieve,
@@ -87,8 +90,17 @@ export enum LoginType {
 export type OnAuthHandler = (cred: Credential) => void
 
 export interface AuthHandlers {
-  userLoginType(user: string, onAuth: OnAuthHandler): LoginType
-  userAuthenticate(user: string, pass: string, onAuth: OnAuthHandler): LoginType
+  userLoginType(
+    client: Socket | TLSSocket,
+    user: string,
+    onAuth: OnAuthHandler
+  ): LoginType
+  userAuthenticate(
+    client: Socket | TLSSocket,
+    user: string,
+    pass: string,
+    onAuth: OnAuthHandler
+  ): LoginType
 }
 
 export type AuthHandlersFactory = (options: AuthOptions) => AuthHandlers
@@ -103,6 +115,7 @@ export default function ({
 }: AuthOptions): AuthHandlers {
   return {
     userLoginType(
+      _client: Socket | TLSSocket,
       username: string,
       onAuthenticated: (credential: Credential) => void
     ): LoginType {
@@ -132,6 +145,7 @@ export default function ({
     },
 
     userAuthenticate(
+      _client: Socket | TLSSocket,
       username: string,
       password: string,
       onAuthenticated: (credential: Credential) => void

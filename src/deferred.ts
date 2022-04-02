@@ -9,8 +9,9 @@
  */
 
 interface IDeferred<T> extends Promise<T> {
-  resolve(val: T): undefined
-  reject(error: Error): undefined
+  resolve(val: T): void
+  reject(error: Error): void
+  // await(): Promise<T> // because await keyword doesn't work same on Deferred<T> as Promise<T>
 }
 
 type PromiseFunction<T> = (
@@ -20,39 +21,33 @@ type PromiseFunction<T> = (
 
 export default class Deferred<T> implements IDeferred<T> {
   deferredConstructor: PromiseFunction<T>
-  p: Promise<T>
+  p: Promise<T> = new Promise((resolve, reject) => {
+    Object.assign(this, { resolve, reject })
+  })
 
   constructor(ctor?: PromiseFunction<T>) {
     if (ctor) this.deferredConstructor = ctor
-    this.p = new Promise((resolve, reject) => {
-      Object.assign(this, { resolve, reject })
-    })
   }
 
+  // dummy implementations
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  resolve(val: T): undefined {
-    throw new Error("Method not implemented.")
-  }
+  resolve(val: T): void {} // eslint-disable-line @typescript-eslint/no-empty-function
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  reject(error: Error): undefined {
-    throw new Error("Method not implemented.")
-  }
+  reject(error: Error): void {} // eslint-disable-line @typescript-eslint/no-empty-function
 
   get [Symbol.toStringTag]() {
     return this.p[Symbol.toStringTag]
   }
 
-  get then() {
-    if (this.deferredConstructor) {
-      this.deferredConstructor(this.resolve, this.reject)
-    }
+  get then(): Promise<T>["then"] {
+    this.deferredConstructor?.(this.resolve, this.reject)
     return this.p.then.bind(this.p)
   }
-  get catch() {
+  get catch(): Promise<T>["catch"] {
     return this.p.catch.bind(this.p)
   }
-  get finally() {
+  get finally(): Promise<T>["finally"] {
     return this.p.finally.bind(this.p)
   }
 }

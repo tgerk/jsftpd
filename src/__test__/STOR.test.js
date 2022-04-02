@@ -2,13 +2,16 @@
 const { createFtpServer } = require("../jsftpd.ts")
 const {
   getDataPort,
+  formatPort,
   sleep,
   ExpectSocket,
+  ExpectServer,
   addFactoryExtensions,
 } = require("./utils")
 const { Writable } = require("stream")
 
 jest.setTimeout(5000)
+const cmdPortTCP = 50021
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
@@ -32,14 +35,14 @@ test("test STOR message without permission", async () => {
     },
   ]
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
   })
   server.start()
 
   const cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -71,14 +74,14 @@ test("test STOR message", async () => {
     },
   ]
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
   })
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -114,7 +117,7 @@ test("test STOR message", async () => {
   dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost)
 
-  await cmdSocket.command("MLSD")
+  cmdSocket.command("MLSD")
 
   const data = await dataSocket.receive()
   expect(data).toMatch("type=file")
@@ -136,7 +139,7 @@ test("test STOR message failes due to socket timeout", async () => {
     },
   ]
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
     timeout: 3000,
@@ -144,7 +147,7 @@ test("test STOR message failes due to socket timeout", async () => {
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -174,14 +177,14 @@ test("test STOR message with ASCII", async () => {
     },
   ]
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
   })
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -245,14 +248,14 @@ test("test STOR message overwrite not allowed", async () => {
     },
   ]
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
   })
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -288,11 +291,10 @@ test("test STOR message overwrite not allowed", async () => {
   dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost)
 
-  await cmdSocket.write("MLSD")
+  cmdSocket.command("LIST")
 
   const data = await dataSocket.receive()
-  expect(data).toMatch("type=file")
-  expect(data).toMatch("size=15")
+  expect(data).toMatch("-r--r--r-- 1 ? ?             15")
   expect(data).toMatch("mytestfile")
 
   const response = await cmdSocket.response()
@@ -325,7 +327,7 @@ test("test STOR message with handler", async () => {
   )
 
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
     store: addFactoryExtensions({
@@ -338,7 +340,7 @@ test("test STOR message with handler", async () => {
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -388,7 +390,7 @@ test("test STOR message with handler fails", async () => {
   )
 
   server = await createFtpServer({
-    port: 50021,
+    port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
     store: addFactoryExtensions({
@@ -401,7 +403,7 @@ test("test STOR message with handler fails", async () => {
   server.start()
 
   let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(50021, localhost).response()).toBe(
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
 
@@ -427,5 +429,121 @@ test("test STOR message with handler fails", async () => {
   expect(fileStore).toBeCalledTimes(1)
   expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
 
+  await cmdSocket.end()
+})
+
+test("test STOR over secure passive connection", async () => {
+  const users = [
+    {
+      username: "john",
+      allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+    },
+  ]
+  server = await createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+  })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
+
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
+
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
+
+  expect(await cmdSocket.command("EPSV").response()).toBe(
+    `229 Entering extended passive mode (|||${dataPort}|)`
+  )
+
+const dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost)
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
+
+  await dataSocket.startTLS({ rejectUnauthorized: false }).send("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  await cmdSocket.end()
+})
+
+test("test STOR over active secure connection", async () => {
+  const users = [
+    {
+      username: "john",
+      allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+    },
+  ]
+  server = await createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+  })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
+
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
+  
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
+
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
+
+  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+
+  const portData = formatPort("127.0.0.1", dataPort)
+  expect(await cmdSocket.command(`PORT ${portData}`).response()).toBe(
+    "200 Port command successful"
+  )
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
+    "150 Opening data connection"
+  )
+
+  const dataSocket = await dataServer.getConnection()
+  await dataSocket
+    .startTLS({ rejectUnauthorized: false })
+    .send("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  await dataServer.close()
   await cmdSocket.end()
 })

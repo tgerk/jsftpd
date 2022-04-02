@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const util = require("util")
 const net = require("net")
+const tls = require("tls")
 const { PromiseSocket } = require("promise-socket")
 
 // eslint-disable-next-line no-undef
@@ -30,15 +31,30 @@ function getDataPort() {
   return parseInt(NODE_MAJOR_VERSION + "120")
 }
 
-class ExpectServer extends PromiseSocket {
+class ExpectServer {
   constructor(server) {
-    super(server ?? net.createServer())
+    this.server = (server ?? net.createServer({ backlog: 0 }))
+    this.server.maxConnections = 1
   }
   listen(port, address) {
-    return this.stream.listen(port, address)
+    this.server.listen(port, address)
+    return this
+  }
+  getConnection() {
+    // assume server is listening
+    return new Promise((resolve) => {
+      // using "once" rather than "on": capture only the first connnection
+      // really would like to use as a queue or an Observable
+      // consider recursion?
+      this.server.once("connection", (socket) => {
+        resolve(new ExpectSocket(socket))
+      })
+    })
   }
   close() {
-    return this.stream.close()
+    return new Promise((resolve) => {
+      this.server.close(resolve)
+    })
   }
 }
 
@@ -49,6 +65,11 @@ class ExpectSocket extends PromiseSocket {
   connect(port, host) {
     this.stream.connect(port, host)
     return this
+  }
+  startTLS(options) {
+    return new ExpectSocket(
+      tls.connect({ socket: this.stream, ...options})
+    )
   }
   command(cmd) {
     this.write(cmd)

@@ -3,7 +3,9 @@ const { createFtpServer } = require("../jsftpd.ts")
 const {
   getCmdPortTCP,
   getDataPort,
+  formatPort,
   ExpectSocket,
+  ExpectServer,
   addFactoryExtensions,
 } = require("./utils")
 const { Readable, Writable } = require("stream")
@@ -411,5 +413,154 @@ test("test RETR message no active or passive mode", async () => {
     "501 Command failed"
   )
 
+  await cmdSocket.end()
+})
+
+test("test RETR over secure passive connection", async () => {
+  const users = [
+    {
+      username: "john",
+      allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+      allowUserFileRetrieve: true,
+    },
+  ]
+  server = await createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+  })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
+
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
+
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
+
+  expect(await cmdSocket.command("EPSV").response()).toBe(
+    `229 Entering extended passive mode (|||${dataPort}|)`
+  )
+
+  const dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost)
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
+
+  await dataSocket
+    .startTLS({ rejectUnauthorized: false })
+    .send("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  // TODO: does this fail b/c passive port is not prepared for a second connection?
+  expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
+
+  expect(
+    await dataSocket
+      .connect(dataPort, localhost)
+      .startTLS({ rejectUnauthorized: false })
+      .receive()
+  ).toMatch("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  await cmdSocket.end()
+})
+
+test("test RETR over active secure connection", async () => {
+  const users = [
+    {
+      username: "john",
+      allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+      allowUserFileRetrieve: true,
+    },
+  ]
+  server = await createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+  })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
+
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
+
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
+
+  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+
+  const portData = formatPort("127.0.0.1", dataPort)
+  expect(await cmdSocket.command(`PORT ${portData}`).response()).toBe(
+    "200 Port command successful"
+  )
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
+    "150 Opening data connection"
+  )
+
+  const storSocket = await dataServer.getConnection()
+  await storSocket
+    .startTLS({ rejectUnauthorized: false })
+    .send("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
+    "150 Opening data connection"
+  )
+
+  const retrSocket = await dataServer.getConnection()
+  expect(
+    await retrSocket.startTLS({ rejectUnauthorized: false }).receive()
+  ).toMatch("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  await dataServer.close()
   await cmdSocket.end()
 })

@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { createFtpServer } = require("../jsftpd.ts")
-const tls = require("tls")
 const {
   getCmdPortTCP,
   getDataPort,
   formatPort,
   ExpectSocket,
+  ExpectServer,
   addFactoryExtensions,
 } = require("./utils")
 
@@ -117,7 +117,7 @@ test("test MLSD message", async () => {
   await cmdSocket.end()
 })
 
-test("test MLSD message over secure connection", async () => {
+test("test MLSD message over passive secure connection", async () => {
   const users = [
     {
       username: "john",
@@ -141,9 +141,7 @@ test("test MLSD message over secure connection", async () => {
     "234 Using authentication type TLS"
   )
 
-  cmdSocket = new ExpectSocket(
-    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false }) // accept self-signed server cert
-  )
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
 
   expect(await cmdSocket.command("USER john").response()).toBe(
     "232 User logged in"
@@ -159,20 +157,78 @@ test("test MLSD message over secure connection", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let dataSocket = new ExpectSocket(
-    new tls.connect(dataPort, localhost, { rejectUnauthorized: false }) // accept self-signed server cert
-  )
-
-  expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
+  expect(await cmdSocket.command("MLSD").response()).toMatch(
     "150 Awaiting passive connection"
   )
 
-  await dataSocket.send("SOMETESTCONTENT")
+  const dataSocket = new ExpectSocket()
+  expect(
+    await dataSocket
+      .connect(dataPort, localhost)
+      .startTLS({ rejectUnauthorized: false })
+      .receive()
+  ).toBe("")
 
-  expect(await cmdSocket.response()).toMatch(
-    '226 Successfully transferred "mytestfile"'
+  expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
+
+  await cmdSocket.end()
+})
+
+test("test MLSD message over secure active connection", async () => {
+  const users = [
+    {
+      username: "john",
+      allowLoginWithoutPassword: true,
+      allowUserFileCreate: true,
+    },
+  ]
+  server = await createFtpServer({
+    port: cmdPortTCP,
+    user: users,
+    minDataPort: dataPort,
+  })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
   )
 
+  expect(await cmdSocket.command("AUTH TLS").response()).toBe(
+    "234 Using authentication type TLS"
+  )
+
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("PBSZ 0").response()).toBe("200 PBSZ=0")
+
+  expect(await cmdSocket.command("PROT P").response()).toBe(
+    "200 Protection level is P"
+  )
+
+  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+
+  expect(
+    await cmdSocket.command(`EPRT ||127.0.0.1|${dataPort}|`).response()
+  ).toBe("200 Extended Port command successful")
+
+  expect(await cmdSocket.command("MLSD").response()).toMatch(
+    "150 Opening data connection"
+  )
+
+  expect(
+    await (await dataServer.getConnection())
+      .startTLS({ rejectUnauthorized: false })
+      .receive()
+  ).toBe("")
+
+  expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
+
+  await dataServer.close()
   await cmdSocket.end()
 })
 

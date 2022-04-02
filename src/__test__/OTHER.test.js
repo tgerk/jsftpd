@@ -72,10 +72,13 @@ test("connect to secure ftp server", async () => {
   })
   server.start()
 
-  const cmdSocket = new ExpectSocket(
-    new tls.connect(cmdPortTLS, localhost, { rejectUnauthorized: false })  // accept self-signed server cert
-  )
-  expect(await cmdSocket.response()).toBe("220 Welcome")
+  const cmdSocket = new ExpectSocket()
+  expect(
+    await cmdSocket
+      .connect(cmdPortTLS, localhost)
+      .startTLS({ rejectUnauthorized: false })
+      .response()
+  ).toBe("220 Welcome")
 
   await cmdSocket.end()
 })
@@ -930,7 +933,6 @@ test("test SIZE message", async () => {
   await cmdSocket.end()
 })
 
-// TODO: test AUTH after login
 test("test AUTH message", async () => {
   const users = [
     {
@@ -954,9 +956,7 @@ test("test AUTH message", async () => {
     "234 Using authentication type TLS"
   )
 
-  cmdSocket = new ExpectSocket(
-    new tls.connect({ socket: cmdSocket.stream, rejectUnauthorized: false }) // accept self-signed server cert
-  )
+  cmdSocket = cmdSocket.startTLS({ rejectUnauthorized: false })
 
   expect(await cmdSocket.command("USER john").response()).toBe(
     "232 User logged in"
@@ -964,6 +964,8 @@ test("test AUTH message", async () => {
 
   await cmdSocket.end()
 })
+
+// TODO: test AUTH TLS _after_ login (should reset session)
 
 test("test PORT message", async () => {
   const users = [
@@ -989,8 +991,7 @@ test("test PORT message", async () => {
     "250 Folder created successfully"
   )
 
-  const dataServer = new ExpectServer()
-  await dataServer.listen(dataPort, "127.0.0.1")
+  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   expect(await cmdSocket.command("PORT something").response()).toBe(
     "501 Port command failed"
@@ -1004,6 +1005,15 @@ test("test PORT message", async () => {
   expect(await cmdSocket.command("MLSD").response()).toMatch(
     "150 Opening data connection"
   )
+
+  const data = await (await dataServer.getConnection()).receive()
+
+  expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
+
+  expect(data).toMatch("type=dir;")
+  expect(data).toMatch("modify=")
+  expect(data).not.toMatch("size=")
+  expect(data).toMatch("john")
 
   await dataServer.close()
   await cmdSocket.end()
@@ -1033,8 +1043,7 @@ test("test EPRT message", async () => {
     "250 Folder created successfully"
   )
 
-  const dataServer = new ExpectServer()
-  await dataServer.listen(dataPort, "127.0.0.1")
+  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   expect(await cmdSocket.command("EPRT something").response()).toBe(
     "501 Extended port command failed"
@@ -1047,6 +1056,15 @@ test("test EPRT message", async () => {
   expect(await cmdSocket.command("MLSD").response()).toMatch(
     "150 Opening data connection"
   )
+
+  const data = await (await dataServer.getConnection()).receive()
+
+  expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
+
+  expect(data).toMatch("type=dir;")
+  expect(data).toMatch("modify=")
+  expect(data).not.toMatch("size=")
+  expect(data).toMatch("john")
 
   await dataServer.close()
   await cmdSocket.end()

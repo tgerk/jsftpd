@@ -157,6 +157,16 @@ export async function createFtpServer({
     const socketKey = ++lastSessionKey
     openSessions.set(socketKey, cmdSocket)
 
+    let username = "nobody",
+      authenticated = false,
+      permissions: Permissions
+
+    let asciiTxfrMode = false,
+      pbszReceived = false,
+      protectedMode = false,
+      renameFileFrom = "",
+      dataOffset = 0
+
     let resolveFolder: StoreHandlers["resolveFolder"],
       resolveFile: StoreHandlers["resolveFile"],
       setFolder: StoreHandlers["setFolder"],
@@ -172,16 +182,6 @@ export async function createFtpServer({
       fileStore: StoreHandlers["fileStore"],
       fileRename: StoreHandlers["fileRename"],
       fileSetTimes: StoreHandlers["fileSetTimes"]
-
-    let username = "nobody",
-      authenticated = false,
-      permissions: Permissions
-
-    let asciiTxfrMode = false
-    let pbszReceived = false
-    let protectedMode = false
-    let renameFileFrom = ""
-    let dataOffset = 0
 
     const localAddr =
         cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown",
@@ -331,18 +331,28 @@ export async function createFtpServer({
        *  AUTH (upgrade command socket security)
        */
       function AUTH(cmd: string, auth: string) {
+        // TODO: reset session variables (User, CWD, Mode, etc.  RFC-4217)
         switch (auth) {
           case "TLS":
           case "SSL":
+            if (passivePort) {
+              passivePort.close()
+            }
+            username = "nobody"
+            authenticated = false
+            asciiTxfrMode = false
+            pbszReceived = false
+            protectedMode = false
+            renameFileFrom = ""
+            dataOffset = 0
+
             client.respond("234", `Using authentication type ${auth}`)
             cmdSocket = new TLSSocket(cmdSocket, {
               secureContext: tlsContext,
               isServer: true,
             })
-            cmdSocket.on("secure", () => {
-              emitDebugMessage(`command connection secured`)
-              client = Object.assign(cmdSocket, { respond })
-            })
+            emitDebugMessage(`command connection secured`)
+            client = Object.assign(cmdSocket, { respond })
             cmdSocket.on("data", CmdHandler)
             break
           default:
@@ -1018,6 +1028,7 @@ export async function createFtpServer({
       }
 
       if ("encrypted" in client && protectedMode) {
+        // TLS server listening, no separate start-TLS process
         passivePort = createSecureServer(tlsOptions, (socket) => {
           emitDebugMessage(`secure data connection established`)
           setupSocket(socket)
@@ -1025,18 +1036,8 @@ export async function createFtpServer({
       } else {
         passivePort = createServer((socket) => {
           emitDebugMessage(`data connection established`)
-          if ("encrypted" in client && protectedMode) {
-            socket = new TLSSocket(socket, {
-              secureContext: tlsContext,
-              isServer: true,
-            })
-            socket.on("secure", () => {
-              emitDebugMessage(`data connection secured`)
-              setupSocket(socket)
-            })
-          } else {
-            setupSocket(socket)
-          }
+          // starting command channel TLS resets active/passive mode
+          setupSocket(socket)
         })
       }
 
@@ -1101,7 +1102,24 @@ export async function createFtpServer({
       function makeDataConnection(
         resolve: (value: Socket | TLSSocket) => void
       ) {
-        function setupSocket(socket: Socket | TLSSocket) {
+        emitDebugMessage(
+          `client data socket addr[${addr}] port[${port}] secure[${
+            "encrypted" in client && protectedMode
+          }]`
+        )
+        let socket = connect(port, addr, () => {
+          emitDebugMessage(`data connection established`)
+          if ("encrypted" in client && protectedMode) {
+            socket = new TLSSocket(socket, {
+              secureContext: tlsContext,
+              isServer: true,
+            })
+            emitDebugMessage(`data connection secured`)
+            emitDebugMessage(
+              `data connection authorized ${(socket as TLSSocket).authorized}`
+            )
+          }
+          
           if ("dataTimeout" in options || "timeout" in options) {
             socket.setTimeout(options.dataTimeout || options.timeout, () => {
               socket.destroy()
@@ -1109,28 +1127,8 @@ export async function createFtpServer({
           }
 
           resolve(socket)
-        }
-
-        emitDebugMessage(
-          `connect to client data socket isSecure[${
-            "encrypted" in client
-          }] protection[${protectedMode}] addr[${addr}] port[${port}]`
-        )
-        let socket = connect(port, addr, () => {
-          emitDebugMessage(`data connection to ${addr}:${port} established`)
-          if ("encrypted" in client && protectedMode) {
-            socket = new TLSSocket(socket, {
-              secureContext: tlsContext,
-              isServer: true,
-            })
-            socket.on("secure", () => {
-              emitDebugMessage(`data connection to ${addr}:${port} secured`)
-              setupSocket(socket)
-            })
-          } else {
-            setupSocket(socket)
-          }
         })
+        
         socket.on("error", SessionErrorHandler("active data socket"))
         socket.on("close", () => {
           // reset for subsequent connection

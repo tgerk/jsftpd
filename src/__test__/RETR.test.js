@@ -11,13 +11,17 @@ const {
 const { Readable, Writable } = require("stream")
 
 jest.setTimeout(5000)
-let server
+let server, dataServer
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
+    if (dataServer) {
+      dataServer.close()
+      dataServer = null
+    }
     server.stop()
     server.cleanup()
     server = null
@@ -114,8 +118,12 @@ test("test RETR message", async () => {
   )
 
   expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
-    "550 File not found"
+    "150 Awaiting passive connection"
   )
+
+  dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost)
+  expect(await cmdSocket.response()).toMatch("550 File not found")
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
     "150 Awaiting passive connection"
@@ -171,7 +179,7 @@ test("test RETR message with ASCII", async () => {
   )
 
   let dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost, "ascii").send("SOMETESTCONTENT")
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
   expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "mytestfile"'
@@ -182,8 +190,13 @@ test("test RETR message with ASCII", async () => {
   )
 
   expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
-    "550 File not found"
+    "150 Awaiting passive connection"
   )
+
+  dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost)
+
+  expect(await cmdSocket.response()).toBe("550 File not found")
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
     "150 Awaiting passive connection"
@@ -191,7 +204,7 @@ test("test RETR message with ASCII", async () => {
 
   dataSocket = new ExpectSocket()
   expect(
-    await dataSocket.connect(dataPort, localhost, "ascii").receive()
+    await dataSocket.connect(dataPort, localhost).receive()
   ).toMatch("SOMETESTCONTENT")
 
   expect(await cmdSocket.response()).toMatch(
@@ -528,7 +541,7 @@ test("test RETR over active secure connection", async () => {
     "200 Protection level is P"
   )
 
-  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+  dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   const portData = formatPort("127.0.0.1", dataPort)
   expect(await cmdSocket.command(`PORT ${portData}`).response()).toBe(

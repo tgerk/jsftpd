@@ -44,14 +44,14 @@ test("test outbound filename transformation", async () => {
     store: (factory) =>
       Object.assign((user) => {
         const backend = factory(user),
-          { folderList: origListFolder } = backend
+          { folderList: folderListOriginal } = backend
         return Object.assign(backend, {
           // display on-disk ####.nc files with DNC-style O#### names
           folderList: (folder) =>
-            origListFolder(folder).then((stats) =>
+            folderListOriginal(folder).then((stats) =>
               stats.map((fstat) =>
                 Object.assign(fstat, {
-                  fname: transformOutbound(fstat.fname),
+                  name: transformOutbound(fstat.name),
                 })
               )
             ),
@@ -83,6 +83,7 @@ test("test outbound filename transformation", async () => {
 
   await cmdSocket.command("NLST")
 
+  // displayed name actually different!
   const data = await dataSocket.receive()
   expect(data).toBe("O0123")
 
@@ -112,14 +113,8 @@ test("test inbound filename transformation", async () => {
     user: users,
     minDataPort: dataPort,
     store: (factory) =>
-      Object.assign((user) => {
-        const backend = factory(user),
-          { resolveFile: origResolveFile } = backend
-
-        return Object.assign(backend, {
-          // resolve name from DNC-style O#### to on-disk ####.nc format
-          resolveFile: (file) => origResolveFile(transformInbound(file)),
-        })
+      Object.assign((user, client, tools) => {
+        return factory(user, client, { ...tools, translateFilename: transformInbound })
       }, factory),
   })
   server.start()
@@ -148,7 +143,7 @@ test("test inbound filename transformation", async () => {
   await dataSocket.send("SOMETESTCONTENT")
 
   expect(await cmdSocket.response()).toBe(
-    '226 Successfully transferred "0123.nc"'
+    '226 Successfully transferred "O0123"'
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
@@ -160,6 +155,7 @@ test("test inbound filename transformation", async () => {
 
   await cmdSocket.command("NLST")
 
+  // name on disk actually different!
   const data = await dataSocket.response()
   expect(data).toMatch(/0123.nc$/)
   await dataSocket.end()

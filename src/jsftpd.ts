@@ -29,9 +29,10 @@ import internalAuth, {
   Credential,
 } from "./auth"
 import localStore, {
-  StoreHandlersFactory,
-  StoreHandlers,
-  FStats,
+  StoreFactory,
+  Store,
+  Stats,
+  Errors as StoreErrors,
 } from "./store"
 import { readFileSync } from "fs"
 
@@ -39,9 +40,7 @@ export type ComposableAuthHandlerFactory = (
   factory: AuthHandlersFactory
 ) => AuthHandlersFactory
 
-export type ComposableStoreHandlerFactory = (
-  factory: StoreHandlersFactory
-) => StoreHandlersFactory
+export type ComposableStoreFactory = (factory: StoreFactory) => StoreFactory
 
 export type ServerOptions = {
   port?: number
@@ -53,7 +52,7 @@ export type ServerOptions = {
   // overlooks misc options for TLS servers and TLS client/server sockets, e.g. session resume, OCSP, pre-shared keys
   tls?: SecureContextOptions // excludes CommonConnectionOptions, e.g. client certificates and SNI
   auth?: ComposableAuthHandlerFactory
-  store?: ComposableStoreHandlerFactory
+  store?: ComposableStoreFactory
 }
 
 export async function createFtpServer({
@@ -166,24 +165,21 @@ export async function createFtpServer({
     let asciiTxfrMode = false,
       pbszReceived = false,
       protectedMode = false,
-      renameFileFrom = "",
       dataOffset = 0
 
-    let resolveFolder: StoreHandlers["resolveFolder"],
-      resolveFile: StoreHandlers["resolveFile"],
-      setFolder: StoreHandlers["setFolder"],
-      getFolder: StoreHandlers["getFolder"],
-      folderExists: StoreHandlers["folderExists"],
-      folderDelete: StoreHandlers["folderDelete"],
-      folderCreate: StoreHandlers["folderCreate"],
-      folderList: StoreHandlers["folderList"],
-      fileExists: StoreHandlers["fileExists"],
-      fileSize: StoreHandlers["fileSize"],
-      fileDelete: StoreHandlers["fileDelete"],
-      fileRetrieve: StoreHandlers["fileRetrieve"],
-      fileStore: StoreHandlers["fileStore"],
-      fileRename: StoreHandlers["fileRename"],
-      fileSetTimes: StoreHandlers["fileSetTimes"]
+    let setFolder: Store["setFolder"],
+      getFolder: Store["getFolder"],
+      folderDelete: Store["folderDelete"],
+      folderCreate: Store["folderCreate"],
+      folderList: Store["folderList"],
+      fileSize: Store["fileSize"],
+      fileDelete: Store["fileDelete"],
+      fileRetrieve: Store["fileRetrieve"],
+      fileStore: Store["fileStore"],
+      fileRename: Store["fileRename"],
+      fileSetTimes: Store["fileSetTimes"]
+
+    let renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
 
     const localAddr =
         cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown",
@@ -288,41 +284,43 @@ export async function createFtpServer({
       /*
        *  USER
        */
-      function USER(cmd: string, user: string) {
-        username = user
+      function USER(_cmd: string, user: string) {
         authenticated = false
         switch (
-          userLoginType(client, username, (credential) =>
-            setUser(credential).then(() => {
-              client.respond("232", "User logged in")
-            })
-          )
+          userLoginType(client, user, (user) => {
+            setUser(user)
+            client.respond("232", "User logged in")
+          })
         ) {
+          case LoginType.Anonymous:
+          case LoginType.Password:
+            username = user
+            client.respond("331", `Password required for ${username}`)
+            break
           case LoginType.NoPassword:
             break
           case LoginType.None:
+          default:
             client.respond("530", "Not logged in")
             break
-          default:
-            client.respond("331", `Password required for ${username}`)
         }
       }
 
       /*
        *  PASS
        */
-      function PASS(cmd: string, password: string) {
+      function PASS(_cmd: string, password: string) {
         switch (
-          userAuthenticate(client, username, password, (credential) =>
-            setUser(credential).then(() => {
-              client.respond("230", "Logged on")
-            })
-          )
+          userAuthenticate(client, username, password, (credential) => {
+            setUser(credential)
+            client.respond("230", "Logged on")
+          })
         ) {
           case LoginType.Anonymous:
-          case LoginType.NoPassword: // eslint-disable-line no-fallthrough
           case LoginType.Password:
+          case LoginType.NoPassword:
             break
+          case LoginType.None:
           default:
             client.respond("530", "Username or password incorrect")
             cmdSocket.end()
@@ -332,21 +330,11 @@ export async function createFtpServer({
       /*
        *  AUTH (upgrade command socket security)
        */
-      function AUTH(cmd: string, auth: string) {
-        // TODO: reset session variables (User, CWD, Mode, etc.  RFC-4217)
+      function AUTH(_cmd: string, auth: string) {
         switch (auth) {
           case "TLS":
           case "SSL":
-            if (passivePort) {
-              passivePort.close()
-            }
-            username = "nobody"
-            authenticated = false
-            asciiTxfrMode = false
-            pbszReceived = false
-            protectedMode = false
-            renameFileFrom = ""
-            dataOffset = 0
+            resetSession() // reset session variables (User, CWD, Mode, etc.  RFC-4217)
 
             client.respond("234", `Using authentication type ${auth}`)
             cmdSocket = new TLSSocket(cmdSocket, {
@@ -381,7 +369,7 @@ export async function createFtpServer({
       /*
        *  PBSZ (set protection buffer size, irrelevant to SSL private mode)
        */
-      function PBSZ(cmd: string, size: string) {
+      function PBSZ(_cmd: string, size: string) {
         pbszReceived = true
         client.respond("200", `PBSZ=${size}`)
       }
@@ -389,7 +377,7 @@ export async function createFtpServer({
       /*
        *  PROT
        */
-      function PROT(cmd: string, protection: string) {
+      function PROT(_cmd: string, protection: string) {
         if (!pbszReceived) {
           client.respond("503", "PBSZ missing")
         } else
@@ -407,7 +395,7 @@ export async function createFtpServer({
       /*
        *  OPTS
        */
-      function OPTS(cmd: string, opt: string) {
+      function OPTS(_cmd: string, opt: string) {
         opt = opt.toLowerCase()
         if (opt === "utf8 on") {
           client.respond("200", "UTF8 ON")
@@ -432,7 +420,7 @@ export async function createFtpServer({
       /*
        *  PORT
        */
-      function PORT(cmd: string, spec: string) {
+      function PORT(_cmd: string, spec: string) {
         const [net0, net1, net2, net3, portHi, portLo] = spec.split(","),
           addr = [net0, net1, net2, net3].join("."),
           port = parseInt(portHi, 10) * 256 + parseInt(portLo)
@@ -471,7 +459,7 @@ export async function createFtpServer({
       /*
        *  EPRT
        */
-      function EPRT(cmd: string, spec: string) {
+      function EPRT(_cmd: string, spec: string) {
         const addrSpec = spec.split("|"),
           addr = addrSpec[2],
           port = parseInt(addrSpec[3], 10)
@@ -516,7 +504,7 @@ export async function createFtpServer({
       /*
        *  TYPE
        */
-      function TYPE(cmd: string, tfrType: string) {
+      function TYPE(_cmd: string, tfrType: string) {
         if (tfrType === "A") {
           asciiTxfrMode = true
           client.respond("200", "Type set to ASCII")
@@ -529,7 +517,7 @@ export async function createFtpServer({
       /*
        *  REST
        */
-      function REST(cmd: string, arg: string) {
+      function REST(_cmd: string, arg: string) {
         const offset = parseInt(arg, 10)
         if (offset >= 0) {
           dataOffset = offset
@@ -550,29 +538,24 @@ export async function createFtpServer({
       /*
        *  CWD
        */
-      function CWD(cmd: string, folder: string) {
-        resolveFolder(folder).then(
+      function CWD(_cmd: string, folder: string) {
+        setFolder(folder).then(
           (folder) =>
-            folderExists(folder).then((isFolder) => {
-              if (isFolder) {
-                setFolder(folder).then(
-                  (folder) =>
-                    client.respond(
-                      "250",
-                      `CWD successful. "${folder}" is current directory`
-                    ),
-                  (error) => {
-                    emitLogMessage(error)
-                    client.respond("530", "CWD not successful")
-                  }
-                )
-              } else {
-                client.respond("550", "Folder not found")
-              }
-            }),
+            client.respond(
+              "250",
+              `CWD successful. "${folder}" is current directory`
+            ),
           (error) => {
+            if (
+              error.code === StoreErrors.ENOTDIR ||
+              error.code === StoreErrors.ENOENT
+            ) {
+              client.respond("550", "Folder not found")
+              return
+            }
+
             emitLogMessage(error)
-            client.respond("550", `Command failed "${folder}`)
+            client.respond("530", "CWD not successful")
           }
         )
       }
@@ -581,63 +564,49 @@ export async function createFtpServer({
        *  RMD
        *  RMDA
        */
-      function RMD(cmd: string, folder: string) {
-        resolveFolder(folder).then(
-          (folder) => {
-            if (!permissions.allowFolderDelete || folder === "/") {
-              client.respond("550", "Permission denied")
-            } else {
-              folderExists(folder).then((isFolder) => {
-                if (isFolder) {
-                  folderDelete(folder).then(
-                    () => {
-                      client.respond("250", "Folder deleted successfully")
-                    },
-                    (error) => {
-                      emitLogMessage(error)
-                      client.respond("501", "Command failed")
-                    }
-                  )
-                } else {
-                  client.respond("550", "Folder not found")
-                }
-              })
+      function RMD(_cmd: string, folder: string) {
+        if (!permissions.allowFolderDelete || folder === "/") {
+          client.respond("550", "Permission denied")
+        } else {
+          folderDelete(folder).then(
+            () => {
+              client.respond("250", "Folder deleted successfully")
+            },
+            (error) => {
+              if (
+                error.code === StoreErrors.ENOTDIR ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "Folder not found")
+                return
+              }
+
+              emitLogMessage(error)
+              client.respond("501", "Command failed")
             }
-          },
-          (error) => {
-            emitLogMessage(error)
-            client.respond("550", `Command failed "${folder}`)
-          }
-        )
+          )
+        }
       }
 
       /*
        *  MKD
        */
-      function MKD(cmd: string, folder: string) {
+      function MKD(_cmd: string, folder: string) {
         if (!permissions.allowFolderCreate) {
           client.respond("550", "Permission denied")
         } else {
-          resolveFolder(folder).then(
-            (folder) =>
-              folderExists(folder).then((isFolder) => {
-                if (isFolder) {
-                  client.respond("550", "Folder exists")
-                } else {
-                  folderCreate(folder).then(
-                    () => {
-                      client.respond("250", "Folder created successfully")
-                    },
-                    (error) => {
-                      emitLogMessage(error)
-                      client.respond("501", "Command failed")
-                    }
-                  )
-                }
-              }),
+          folderCreate(folder).then(
+            () => {
+              client.respond("250", "Folder created successfully")
+            },
             (error) => {
+              if (error.code == StoreErrors.EEXIST) {
+                client.respond("550", "Folder exists")
+                return
+              }
+
               emitLogMessage(error)
-              client.respond("550", `Command failed "${folder}`)
+              client.respond("501", "Command failed")
             }
           )
         }
@@ -650,18 +619,25 @@ export async function createFtpServer({
        */
       function LIST(cmd: string, folder: string) {
         openDataSocket().then(
-          (socket: Writable) => {
+          (socket: Writable) =>
             folderList(folder)
               .then((stats) => stats.map(formatListing(cmd)).join("\r\n"))
-              .then((listing) => {
-                emitDebugMessage(`LIST response on data channel\r\n${listing}`)
-                socket.end(listing + "\r\n")
-                client.respond(
-                  "226",
-                  `Successfully transferred "${getFolder()}"`
-                )
-              })
-          },
+              .then(
+                (listing) => {
+                  emitDebugMessage(
+                    `LIST response on data channel\r\n${listing}`
+                  )
+                  socket.end(listing + "\r\n")
+                  client.respond(
+                    "226",
+                    `Successfully transferred "${getFolder()}"`
+                  )
+                },
+                (error) => {
+                  emitLogMessage(error)
+                  client.respond("501", `Command failed`)
+                }
+              ),
           (error: NodeJS.ErrnoException) => {
             emitLogMessage(error)
             client.respond("501", "Command failed")
@@ -672,26 +648,17 @@ export async function createFtpServer({
       /*
        *  SIZE
        */
-      function SIZE(cmd: string, file: string) {
-        resolveFile(file).then(
-          (file) =>
-            fileSize(file).then(
-              (size) => {
-                client.respond("213", size.toString())
-              },
-              (error) => {
-                emitLogMessage(error)
-                switch (error.code) {
-                  case "ENOENT":
-                    client.respond("550", "File not found")
-                    break
-                  default:
-                    client.respond("501", "Command failed")
-                    break
-                }
-              }
-            ),
+      function SIZE(_cmd: string, file: string) {
+        fileSize(file).then(
+          (size) => {
+            client.respond("213", size.toString())
+          },
           (error) => {
+            if (error.code === StoreErrors.ENOENT) {
+              client.respond("550", "File not found")
+              return
+            }
+
             emitLogMessage(error)
             client.respond("501", "Command failed")
           }
@@ -701,29 +668,20 @@ export async function createFtpServer({
       /*
        *  DELE
        */
-      function DELE(cmd: string, file: string) {
+      function DELE(_cmd: string, file: string) {
         if (!permissions.allowFileDelete) {
           client.respond("550", "Permission denied")
         } else {
-          resolveFile(file).then(
-            (file) =>
-              fileDelete(file).then(
-                () => {
-                  client.respond("250", "File deleted successfully")
-                },
-                (error) => {
-                  emitLogMessage(error)
-                  switch (error.code) {
-                    case "ENOENT":
-                      client.respond("550", "File not found")
-                      break
-                    default:
-                      client.respond("501", "Command failed")
-                      break
-                  }
-                }
-              ),
+          fileDelete(file).then(
+            () => {
+              client.respond("250", "File deleted successfully")
+            },
             (error) => {
+              if (error.code === StoreErrors.ENOENT) {
+                client.respond("550", "File not found")
+                return
+              }
+
               emitLogMessage(error)
               client.respond("501", "Command failed")
             }
@@ -734,195 +692,58 @@ export async function createFtpServer({
       /*
        *  RETR
        */
-      function RETR(cmd: string, param: string) {
-        resolveFile(param).then(
-          (file) => {
-            if (!permissions.allowFileRetrieve) {
-              client.respond("550", `Transfer failed "${file}"`)
-            } else {
-              fileExists(file).then((isFile) => {
-                if (!isFile) {
-                  client.respond("550", "File not found")
-                } else {
-                  openDataSocket().then(
-                    (writeSocket: Writable) =>
-                      fileRetrieve(file, dataOffset)
-                        .then((readStream) => {
-                          readStream.on(
-                            "error",
-                            (error: NodeJS.ErrnoException) => {
-                              // incomplete write
-                              emitLogMessage(error)
-                              writeSocket.destroy()
-                              client.respond("550", `Transfer failed "${file}"`)
-                            }
-                          )
-                          writeSocket.on("error", () => {
-                            // incomplete write
-                            readStream.destroy()
-                            client.respond(
-                              "426",
-                              `Connection closed. Aborted transfer of "${file}"`
-                            )
-                          })
-                          readStream.on("close", () => {
-                            // end of file
-                            writeSocket.end()
-                            emitDownloadEvent(file)
-                            client.respond(
-                              "226",
-                              `Successfully transferred "${file}"`
-                            )
-                          })
-                          if (asciiTxfrMode) {
-                            readStream = asciify(readStream)
-                          }
-                          // transform or log outbound stream
-                          readStream.pipe(writeSocket)
-                        })
-                        .finally(() => {
-                          dataOffset = 0
-                        }),
-                    (error: NodeJS.ErrnoException) => {
+      function RETR(_cmd: string, file: string) {
+        if (!permissions.allowFileRetrieve) {
+          client.respond("550", `Transfer failed "${file}"`)
+        } else {
+          openDataSocket().then(
+            (writeSocket: Writable) =>
+              fileRetrieve(file, dataOffset)
+                .then(
+                  (readStream) => {
+                    readStream.on("error", (error: NodeJS.ErrnoException) => {
+                      // error on read
+                      writeSocket.destroy()
                       emitLogMessage(error)
-                      client.respond("501", "Command failed")
+                      client.respond("550", `Transfer failed "${file}"`)
+                    })
+                    writeSocket.on("error", () => {
+                      // error on transmit
+                      readStream.destroy()
+                      client.respond(
+                        "426",
+                        `Connection closed. Aborted transfer of "${file}"`
+                      )
+                    })
+                    readStream.on("close", () => {
+                      // end of file
+                      writeSocket.end()
+                      emitDownloadEvent(file)
+                      client.respond(
+                        "226",
+                        `Successfully transferred "${file}"`
+                      )
+                    })
+                    if (asciiTxfrMode) {
+                      readStream = asciify(readStream)
                     }
-                  )
-                }
-              })
-            }
-          },
-          (error) => {
-            emitLogMessage(error)
-            client.respond("550", `Transfer failed "${param}`)
-          }
-        )
-      }
+                    readStream.pipe(writeSocket)
+                  },
+                  (error) => {
+                    writeSocket.destroy()
+                    if (error.code === StoreErrors.ENOENT) {
+                      client.respond("550", "File not found")
+                      return
+                    }
 
-      /*
-       *  STOR
-       */
-      function STOR(cmd: string, param: string) {
-        resolveFile(param).then(
-          (file) =>
-            fileExists(file).then((isFile) => {
-              if (
-                isFile
-                  ? !permissions.allowFileOverwrite
-                  : !permissions.allowFileCreate
-              ) {
-                client.respond(
-                  "550",
-                  isFile ? "File already exists" : `Transfer failed "${file}"`
-                )
-              } else {
-                openDataSocket().then(
-                  (readSocket: Readable) =>
-                    fileStore(file, dataOffset)
-                      .then((writeStream) => {
-                        writeStream.on(
-                          "error",
-                          (error: NodeJS.ErrnoException) => {
-                            // incomplete write
-                            emitLogMessage(error)
-                            readSocket.destroy()
-                            client.respond("550", `Transfer failed "${file}"`)
-                          }
-                        )
-                        readSocket.on("error", (error) => {
-                          // incomplete upload
-                          emitLogMessage(error)
-                          writeStream.destroy()
-                          client.respond("550", `Transfer failed "${file}"`)
-                        })
-                        readSocket.on("end", () => {
-                          // end of file
-                          writeStream.end()
-                          emitUploadEvent(file)
-                          client.respond(
-                            "226",
-                            `Successfully transferred "${file}"`
-                          )
-                        })
-                        if (asciiTxfrMode) {
-                          readSocket = deasciify(readSocket)
-                        }
-                        // transform or log inbound stream
-                        readSocket.pipe(writeStream)
-                      })
-                      .finally(() => {
-                        dataOffset = 0
-                      }),
-                  (error: NodeJS.ErrnoException) => {
                     emitLogMessage(error)
                     client.respond("501", "Command failed")
                   }
                 )
-              }
-            }),
-          (error) => {
-            emitLogMessage(error)
-            client.respond("550", `Transfer failed "${param}"`)
-          }
-        )
-      }
-
-      /*
-       *  RNFR
-       */
-      function RNFR(cmd: string, file: string) {
-        resolveFile(file).then(
-          (file) =>
-            fileExists(file).then((isFile) => {
-              if (!isFile) {
-                client.respond("550", "File does not exist")
-              } else if (!permissions.allowFileRename) {
-                client.respond("550", "Permission denied")
-              } else {
-                renameFileFrom = path.relative(
-                  "/",
-                  path.join(getFolder(), file)
-                )
-                client.respond("350", "File exists")
-              }
-            }),
-          (error) => {
-            emitLogMessage(error)
-            client.respond("501", "Command failed")
-          }
-        )
-      }
-
-      /*
-       *  RNTO
-       */
-      function RNTO(cmd: string, file: string) {
-        if (!permissions.allowFileRename) {
-          client.respond("550", "Permission denied")
-        } else {
-          resolveFile(file).then(
-            (file) =>
-              fileExists(file).then((isFile) => {
-                if (isFile) {
-                  client.respond("550", "File already exists")
-                } else {
-                  fileRename(renameFileFrom, file)
-                    .then(
-                      () => {
-                        emitRenameEvent(renameFileFrom, file)
-                        client.respond("250", "File renamed successfully")
-                      },
-                      (error) => {
-                        emitLogMessage(error)
-                        client.respond("550", "File rename failed")
-                      }
-                    )
-                    .finally(() => {
-                      renameFileFrom = ""
-                    })
-                }
-              }),
-            (error) => {
+                .finally(() => {
+                  dataOffset = 0
+                }),
+            (error: NodeJS.ErrnoException) => {
               emitLogMessage(error)
               client.respond("501", "Command failed")
             }
@@ -931,30 +752,133 @@ export async function createFtpServer({
       }
 
       /*
-       *  MFMT
+       *  STOR
        */
-      function MFMT(cmd: string, arg: string) {
-        const [time, ...rest] = arg.split(/\s+/),
-          mtime = getDateForMFMT(time)
-        resolveFile(rest.join(" ")).then(
-          (file) =>
-            fileSetTimes(file, mtime).then(
+      function STOR(_cmd: string, file: string) {
+        if (!permissions.allowFileOverwrite && !permissions.allowFileCreate) {
+          client.respond("550", `Transfer failed "${file}"`)
+        } else {
+          // but what if allowFileOverwrite, but not allowFileCreate?
+          openDataSocket().then(
+            (readSocket: Readable) =>
+              fileStore(file, permissions.allowFileOverwrite, dataOffset)
+                .then(
+                  (writeStream) => {
+                    readSocket.on("error", (error) => {
+                      // error on receive
+                      emitLogMessage(error)
+                      writeStream.destroy()
+                      client.respond("550", `Transfer failed "${file}"`)
+                    })
+                    writeStream.on("error", (error: NodeJS.ErrnoException) => {
+                      // error on write
+                      readSocket.destroy()
+                      emitLogMessage(error)
+                      client.respond("550", `Transfer failed "${file}"`)
+                    })
+                    readSocket.on("end", () => {
+                      // end of file
+                      writeStream.end()
+                      emitUploadEvent(file)
+                      client.respond(
+                        "226",
+                        `Successfully transferred "${file}"`
+                      )
+                    })
+                    if (asciiTxfrMode) {
+                      readSocket = deasciify(readSocket)
+                    }
+                    // transform or log inbound stream
+                    readSocket.pipe(writeStream)
+                  },
+                  (error) => {
+                    readSocket.destroy()
+                    if (error.code === StoreErrors.EEXIST) {
+                      client.respond("550", "File already exists")
+                      return
+                    }
+
+                    emitLogMessage(error)
+                    client.respond("501", `Transfer failed "${file}"`)
+                  }
+                )
+                .finally(() => {
+                  dataOffset = 0
+                }),
+            (error: NodeJS.ErrnoException) => {
+              emitLogMessage(error)
+              client.respond("501", "Command failed")
+            }
+          )
+        }
+      }
+
+      /*
+       *  RNFR
+       */
+      function RNFR(_cmd: string, file: string) {
+        if (!permissions.allowFileRename) {
+          client.respond("550", "Permission denied")
+        } else {
+          fileRename(file).then(
+            (renamingFunction) => {
+              renameFileToFn = renamingFunction
+              client.respond("350", "File exists")
+            },
+            () => {
+              client.respond("550", "File does not exist")
+            }
+          )
+        }
+      }
+
+      /*
+       *  RNTO
+       */
+      function RNTO(_cmd: string, file: string) {
+        if (!permissions.allowFileRename) {
+          client.respond("550", "Permission denied")
+        } else if (!renameFileToFn) {
+          client.respond("503", "RNFR missing")
+        } else {
+          renameFileToFn(file)
+            .then(
               () => {
-                client.respond("253", "Date/time changed okay")
+                emitRenameEvent(renameFileToFn.fromFile, file)
+                client.respond("250", "File renamed successfully")
               },
               (error) => {
-                emitLogMessage(error)
-                switch (error.code) {
-                  case "ENOENT":
-                    client.respond("550", "File does not exist")
-                    break
-                  default:
-                    client.respond("501", "Command failed")
-                    break
+                if (error.code === StoreErrors.EEXIST) {
+                  client.respond("550", "File already exists")
+                  return
                 }
+
+                emitLogMessage(error)
+                client.respond("550", "File rename failed")
               }
-            ),
+            )
+            .finally(() => {
+              renameFileToFn = undefined
+            })
+        }
+      }
+
+      /*
+       *  MFMT
+       */
+      function MFMT(_cmd: string, arg: string) {
+        const [time, ...rest] = arg.split(/\s+/),
+          mtime = getDateForMFMT(time)
+        fileSetTimes(rest.join(" "), mtime).then(
+          () => {
+            client.respond("253", "Date/time changed okay")
+          },
           (error) => {
+            if (error.code === StoreErrors.ENOENT) {
+              client.respond("550", "File does not exist")
+              return
+            }
+
             emitLogMessage(error)
             client.respond("501", "Command failed")
           }
@@ -962,20 +886,38 @@ export async function createFtpServer({
       }
     }
 
-    function setUser(credential: Credential) {
-      ;({
-        resolveFolder,
-        resolveFile,
+    function resetSession() {
+      if (passivePort) {
+        passivePort.close()
+      }
+      username = "nobody"
+      authenticated = false
 
+      asciiTxfrMode = false
+      pbszReceived = false
+      protectedMode = false
+      permissions = renameFileToFn = undefined
+      dataOffset = 0
+    }
+
+    function setUser(credential: Credential) {
+      resetSession()
+      ;({ username } = credential)
+      authenticated = true
+
+      permissions = Object.fromEntries(
+        Object.entries(credential).filter((entry) =>
+          entry[0].startsWith("allow")
+        )
+      ) as Permissions
+      ;({
         setFolder,
         getFolder,
 
-        folderExists,
         folderDelete,
         folderCreate,
         folderList,
 
-        fileExists,
         fileSize,
         fileDelete,
         fileRetrieve,
@@ -984,26 +926,7 @@ export async function createFtpServer({
         fileSetTimes,
       } = storeBackend(credential, client))
 
-      return folderExists().then(
-        () => {
-          ;({ username } = credential)
-          authenticated = true
-          permissions = credential
-
-          emitLoginEvent()
-          asciiTxfrMode = false
-          pbszReceived = false
-          protectedMode = false
-          renameFileFrom = ""
-          dataOffset = 0
-        },
-        () => {
-          throw Object.assign(
-            Error(`user basefolder [${credential.basefolder}] does not exist`),
-            { code: "ENOTDIR" }
-          )
-        }
-      )
+      emitLoginEvent()
     }
 
     function setupPassiveSocket() {
@@ -1011,7 +934,7 @@ export async function createFtpServer({
         passivePort.close()
       }
 
-      // inbound connection is deferred
+      // inbound connection won't occur til later
       dataSocket = new Deferred<Socket | TLSSocket>()
       function setupSocket(socket: Socket | TLSSocket) {
         if ("dataTimeout" in options || "timeout" in options) {
@@ -1099,7 +1022,7 @@ export async function createFtpServer({
         passivePort = undefined
       }
 
-      // defer initiating outbound connection
+      // don't initiate outbound connection til later
       dataSocket = new Deferred<Socket | TLSSocket>(makeDataConnection)
       function makeDataConnection(
         resolve: (value: Socket | TLSSocket) => void
@@ -1202,16 +1125,16 @@ export async function createFtpServer({
     }
 
     function SessionErrorHandler(socketType: string) {
-      return function SocketErrorHandler(err: NodeJS.ErrnoException) {
-        if (err?.code === "ECONNRESET") {
-          emitLogMessage(err)
+      return function SocketErrorHandler(error: NodeJS.ErrnoException) {
+        if (error?.code === "ECONNRESET") {
+          emitLogMessage(error)
           return
         }
 
         emitter.emit(
           "error",
           `${socketType} error ${remoteInfo} ${getDateForLogs()} ${util.inspect(
-            err,
+            error,
             {
               showHidden: false,
               depth: null,
@@ -1219,6 +1142,7 @@ export async function createFtpServer({
             }
           )}`
         )
+        console.error(error)
       }
     }
   }
@@ -1249,25 +1173,25 @@ export default createFtpServer
 function formatListing(format = "LIST") {
   switch (format) {
     case "NLST":
-      return (fstat: FStats) => fstat.fname
+      return ({ name }: Stats) => name
     case "MLSD":
-      return (fstat: FStats) =>
+      return (fstat: Stats) =>
         util.format(
           "type=%s;modify=%s;%s %s",
           fstat.isDirectory() ? "dir" : "file",
           getDateForMLSD(fstat.mtime),
           fstat.isDirectory() ? "" : "size=" + fstat.size.toString() + ";",
-          fstat.fname
+          fstat.name
         )
     case "LIST":
     default:
-      return (fstat: FStats) =>
+      return (fstat: Stats) =>
         util.format(
           "%s 1 ? ? %s %s %s", // showing link-count = 1, don't expose uid, gid
           fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--",
           String(fstat.isDirectory() ? "0" : fstat.size).padStart(14, " "),
           getDateForLIST(fstat.mtime),
-          fstat.fname
+          fstat.name
         )
   }
 }

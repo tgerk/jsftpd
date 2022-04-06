@@ -63,7 +63,7 @@ test("login as anonymous when enabled", async () => {
     "331 Password required for anonymous"
   )
 
-  expect(await cmdSocket.command("PASS anonymous@anonymous").response()).toBe(
+  expect(await cmdSocket.command("PASS anonymous@local").response()).toBe(
     "230 Logged on"
   )
 

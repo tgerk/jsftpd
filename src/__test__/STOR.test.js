@@ -15,9 +15,13 @@ const cmdPortTCP = 50021
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
-let server
+let server, dataServer
 const cleanup = function () {
   if (server) {
+    if (dataServer) {
+      dataServer.close()
+      dataServer = null
+    }
     server.stop()
     server.cleanup()
     server = null
@@ -90,7 +94,7 @@ test("test STOR message", async () => {
   )
 
   expect(await cmdSocket.command("STOR ../../mytestfile").response()).toBe(
-    '550 Transfer failed "../../mytestfile"'
+    '501 Command failed'
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
@@ -160,7 +164,7 @@ test("test STOR message failes due to socket timeout", async () => {
   )
 
   let dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost, "ascii")
+  await dataSocket.connect(dataPort, localhost)
 
   await sleep(3500)
   expect(dataSocket.socket.destroyed).toBe(true)
@@ -196,16 +200,12 @@ test("test STOR message with ASCII", async () => {
     "200 Type set to ASCII"
   )
 
-  expect(await cmdSocket.command("STOR ../../mytestfile").response()).toBe(
-    '550 Transfer failed "../../mytestfile"'
-  )
-
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
   let dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost, "ascii")
+  await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
     "150 Awaiting passive connection"
@@ -222,7 +222,7 @@ test("test STOR message with ASCII", async () => {
   )
 
   dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost, "ascii")
+  await dataSocket.connect(dataPort, localhost)
 
   cmdSocket.command("MLSD")
 
@@ -263,10 +263,6 @@ test("test STOR message overwrite not allowed", async () => {
     "232 User logged in"
   )
 
-  expect(await cmdSocket.command("STOR ../../mytestfile").response()).toBe(
-    '550 Transfer failed "../../mytestfile"'
-  )
-
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
@@ -302,8 +298,12 @@ test("test STOR message overwrite not allowed", async () => {
   expect(response).toMatch('226 Successfully transferred "/"')
 
   expect(await cmdSocket.command("STOR /mytestfile").response()).toBe(
-    "550 File already exists"
+    "150 Awaiting passive connection"
   )
+
+  await dataSocket.connect(dataPort, localhost)
+
+  expect(await cmdSocket.response()).toBe("550 File already exists")
 
   await cmdSocket.end()
 })
@@ -366,7 +366,7 @@ test("test STOR message with handler", async () => {
   )
 
   expect(fileStore).toBeCalledTimes(1)
-  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
+  expect(fileStore).toHaveBeenCalledWith("mytestfile", false, 0)
 
   await cmdSocket.end()
 })
@@ -427,7 +427,7 @@ test("test STOR message with handler fails", async () => {
   expect(await cmdSocket.response()).toBe('550 Transfer failed "mytestfile"')
 
   expect(fileStore).toBeCalledTimes(1)
-  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
+  expect(fileStore).toHaveBeenCalledWith("mytestfile", false, 0)
 
   await cmdSocket.end()
 })
@@ -526,7 +526,7 @@ test("test STOR over active secure connection", async () => {
     "200 Protection level is P"
   )
 
-  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+  dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   const portData = formatPort("127.0.0.1", dataPort)
   expect(await cmdSocket.command(`PORT ${portData}`).response()).toBe(

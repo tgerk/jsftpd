@@ -12,7 +12,7 @@ const {
 } = require("./utils")
 
 jest.setTimeout(5000)
-let server
+let server, dataServer
 const cmdPortTCP = getCmdPortTCP()
 const cmdPortTLS = getCmdPortTLS()
 const dataPort = getDataPort()
@@ -20,6 +20,10 @@ const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
+    if (dataServer) {
+      dataServer.close()
+      dataServer = null
+    }
     server.stop()
     server.cleanup()
     server = null
@@ -991,7 +995,7 @@ test("test PORT message", async () => {
     "250 Folder created successfully"
   )
 
-  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+  dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   expect(await cmdSocket.command("PORT something").response()).toBe(
     "501 Port command failed"
@@ -1043,7 +1047,7 @@ test("test EPRT message", async () => {
     "250 Folder created successfully"
   )
 
-  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+  dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   expect(await cmdSocket.command("EPRT something").response()).toBe(
     "501 Extended port command failed"

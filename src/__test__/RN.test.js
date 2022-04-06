@@ -28,6 +28,7 @@ test("test RNFR message file does not exist", async () => {
       username: "john",
       allowLoginWithoutPassword: true,
       allowUserFileCreate: true,
+      allowUserFileRename: true,
     },
   ]
   server = await createFtpServer({
@@ -145,16 +146,20 @@ test("test RNFR/RNTO message using handlers", async () => {
       allowUserFileRename: true,
     },
   ]
-  const fileRename = jest
-    .fn()
-    .mockImplementationOnce(() => Promise.resolve(true))
+  const fileRenameTo = jest
+      .fn()
+      .mockImplementationOnce((_toFile) => Promise.resolve(true)),
+    fileRename = jest
+      .fn()
+      .mockImplementationOnce(
+        (fromFile) =>
+          fromFile === "mytestfile" &&
+          Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
+      )
   server = await createFtpServer({
     port: 50021,
     user: users,
     store: addFactoryExtensions({
-      fileExists(file) {
-        return Promise.resolve(file === "mytestfile")
-      },
       fileRename,
     }),
   })
@@ -178,7 +183,9 @@ test("test RNFR/RNTO message using handlers", async () => {
   )
 
   expect(fileRename).toBeCalledTimes(1)
-  expect(fileRename).toHaveBeenCalledWith("mytestfile", "someotherfile")
+  expect(fileRename).toHaveBeenCalledWith("mytestfile")
+  expect(fileRenameTo).toBeCalledTimes(1)
+  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile")
 
   await cmdSocket.end()
 })
@@ -191,16 +198,20 @@ test("test RNFR/RNTO message using handlers failing", async () => {
       allowUserFileRename: true,
     },
   ]
-  const fileRename = jest
-    .fn()
-    .mockImplementationOnce(() => Promise.reject(Error("mock")))
+  const fileRenameTo = jest
+      .fn()
+      .mockImplementationOnce((_toFile) => Promise.reject(new Error("mock"))),
+    fileRename = jest
+      .fn()
+      .mockImplementationOnce(
+        (fromFile) =>
+          fromFile === "mytestfile" &&
+          Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
+      )
   server = await createFtpServer({
     port: 50021,
     user: users,
     store: addFactoryExtensions({
-      fileExists(file) {
-        return Promise.resolve(file === "mytestfile")
-      },
       fileRename,
     }),
   })
@@ -224,7 +235,9 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   )
 
   expect(fileRename).toBeCalledTimes(1)
-  expect(fileRename).toHaveBeenCalledWith("mytestfile", "someotherfile")
+  expect(fileRename).toHaveBeenCalledWith("mytestfile")
+  expect(fileRenameTo).toBeCalledTimes(1)
+  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile")
 
   await cmdSocket.end()
 })

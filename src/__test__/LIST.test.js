@@ -10,13 +10,17 @@ const {
 } = require("./utils")
 
 jest.setTimeout(5000)
-let server = null
+let server, dataServer
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
+    if (dataServer) {
+      dataServer.close()
+      dataServer = null
+    }
     server.stop()
     server.cleanup()
     server = null
@@ -210,7 +214,7 @@ test("test MLSD message over secure active connection", async () => {
     "200 Protection level is P"
   )
 
-  const dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
+  dataServer = new ExpectServer().listen(dataPort, "127.0.0.1")
 
   expect(
     await cmdSocket.command(`EPRT ||127.0.0.1|${dataPort}|`).response()

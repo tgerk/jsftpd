@@ -114,7 +114,10 @@ test("test inbound filename transformation", async () => {
     minDataPort: dataPort,
     store: (factory) =>
       Object.assign((user, client, tools) => {
-        return factory(user, client, { ...tools, translateFilename: transformInbound })
+        return factory(user, client, {
+          ...tools,
+          translateFilename: transformInbound,
+        })
       }, factory),
   })
   server.start()

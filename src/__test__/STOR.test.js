@@ -94,7 +94,7 @@ test("test STOR message", async () => {
   )
 
   expect(await cmdSocket.command("STOR ../../mytestfile").response()).toBe(
-    '501 Command failed'
+    "501 Command failed"
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(

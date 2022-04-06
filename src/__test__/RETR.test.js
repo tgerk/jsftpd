@@ -203,9 +203,9 @@ test("test RETR message with ASCII", async () => {
   )
 
   dataSocket = new ExpectSocket()
-  expect(
-    await dataSocket.connect(dataPort, localhost).receive()
-  ).toMatch("SOMETESTCONTENT")
+  expect(await dataSocket.connect(dataPort, localhost).receive()).toMatch(
+    "SOMETESTCONTENT"
+  )
 
   expect(await cmdSocket.response()).toMatch(
     '226 Successfully transferred "mytestfile"'

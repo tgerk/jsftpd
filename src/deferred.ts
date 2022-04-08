@@ -11,7 +11,6 @@
 interface IDeferred<T> extends Promise<T> {
   resolve(val: T): void
   reject(error: Error): void
-  // await(): Promise<T> // because await keyword doesn't work same on Deferred<T> as Promise<T>
 }
 
 type PromiseFunction<T> = (
@@ -27,6 +26,10 @@ export default class Deferred<T> implements IDeferred<T> {
 
   constructor(ctor?: PromiseFunction<T>) {
     if (ctor) this.deferredConstructor = ctor
+  }
+
+  clone() {
+    return new Deferred<T>(this.deferredConstructor)
   }
 
   // dummy implementations

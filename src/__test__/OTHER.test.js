@@ -76,13 +76,11 @@ test("connect to secure ftp server", async () => {
   })
   server.start()
 
-  const cmdSocket = new ExpectSocket()
-  expect(
-    await cmdSocket
-      .connect(cmdPortTLS, localhost)
-      .startTLS({ rejectUnauthorized: false })
-      .response()
-  ).toBe("220 Welcome")
+  // this is an SFTP connection, not FTP+startTLS
+  const cmdSocket = new ExpectSocket(
+    tls.connect(cmdPortTLS, localhost, { rejectUnauthorized: false })
+  )
+  expect(await cmdSocket.response()).toBe("220 Welcome")
 
   await cmdSocket.end()
 })

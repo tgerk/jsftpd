@@ -64,7 +64,11 @@ class ExpectSocket extends PromiseSocket {
   }
   connect(port, host) {
     this.stream.connect(port, host)
-    return this
+    return this // connection is pending
+  }
+  async connectSync(port, host) {
+    await super.connect(port, host)
+    return this // connection is made
   }
   startTLS(options) {
     return new ExpectSocket(tls.connect({ socket: this.stream, ...options }))

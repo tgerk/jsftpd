@@ -21,7 +21,7 @@ test("test conversion *into* NVT-ASCII transport format", (done) => {
     done()
   })
 
-  asciify(input).pipe(sink)
+  input.pipe(asciify()).pipe(sink)
 })
 
 test("test conversion *from* NVT-ASCII transport format", (done) => {
@@ -33,5 +33,5 @@ test("test conversion *from* NVT-ASCII transport format", (done) => {
     done()
   })
 
-  deasciify(input).pipe(sink)
+  input.pipe(deasciify()).pipe(sink)
 })

@@ -65,7 +65,8 @@ test("test STOR message without permission", async () => {
     '550 Transfer failed "mytestfile"'
   )
 
-  await dataSocket.stream.end()
+  // permission error will not destroy data connection
+  await dataSocket.end()
   await cmdSocket.end()
 })
 
@@ -267,8 +268,7 @@ test("test STOR message overwrite not allowed", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  let dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
+  let dataSocket = new ExpectSocket().connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
     "150 Awaiting passive connection"
@@ -280,18 +280,18 @@ test("test STOR message overwrite not allowed", async () => {
     '226 Successfully transferred "mytestfile"'
   )
 
-  expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort}|)`
-  )
-
+  // complete connection before sending command
   dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
+  await dataSocket.connectSync(dataPort, localhost)
 
   cmdSocket.command("LIST")
 
   const data = await dataSocket.receive()
   expect(data).toMatch("-r--r--r-- 1 ? ?             15")
   expect(data).toMatch("mytestfile")
+
+  await sleep(10)
+  expect(dataSocket.stream.destroyed).toBe(true)
 
   const response = await cmdSocket.response()
   expect(response).toMatch("150 Awaiting passive connection")
@@ -301,9 +301,12 @@ test("test STOR message overwrite not allowed", async () => {
     "150 Awaiting passive connection"
   )
 
-  await dataSocket.connect(dataPort, localhost)
-
+  // have to connect before the error comes back
+  await dataSocket.connectSync(dataPort, localhost)
   expect(await cmdSocket.response()).toBe("550 File already exists")
+
+  await sleep(1)
+  expect(dataSocket.stream.destroyed).toBe(true)
 
   await cmdSocket.end()
 })

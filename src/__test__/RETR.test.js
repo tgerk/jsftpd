@@ -372,15 +372,15 @@ test("test RETR message with handler fails", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  await cmdSocket.command("RETR mytestfile")
+  expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
+    "150 Awaiting passive connection"
+  )
 
   dataSocket = new ExpectSocket()
   const data = await dataSocket.connect(dataPort, localhost).receive()
   expect(data).toBe(undefined)
 
-  const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
-  expect(response).toMatch('550 Transfer failed "mytestfile"')
+  expect(await cmdSocket.response()).toMatch('550 Transfer failed "mytestfile"')
 
   expect(fileStore).toBeCalledTimes(1)
   expect(fileRetrieve).toBeCalledTimes(1)

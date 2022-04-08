@@ -153,8 +153,7 @@ test("test inbound filename transformation", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
+  dataSocket.connect(dataPort, localhost)
 
   await cmdSocket.command("NLST")
 

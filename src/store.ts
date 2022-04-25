@@ -141,17 +141,15 @@ function localStoreFactory(
   function fileExists(file: string): Promise<boolean> {
     // input checked relative to current folder
     // advance status check is inconclusive, check error condition later
-    return fs
-      .stat(path.join(baseFolder, currentFolder, file))
-      .then((fstat) => {
-        if (fstat.isFile()) {
-          return true
-        }
+    return fs.stat(path.join(baseFolder, currentFolder, file)).then((fstat) => {
+      if (fstat.isFile()) {
+        return true
+      }
 
-        throw Object.assign(new Error("not file"), {
-          code: Errors.ENOTFILE,
-        })
+      throw Object.assign(new Error("not file"), {
+        code: Errors.ENOTFILE,
       })
+    })
   }
 
   return {

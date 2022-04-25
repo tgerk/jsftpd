@@ -44,7 +44,7 @@ function baseFolderCleanup(baseFolder: string = defaultBaseFolder): void {
 //  PWD / CWD indicate a state of traversing the tree
 //  file and folder manipulating commands implicitly refer to PWD state
 export interface Store {
-  // control PWD state, "current node" implicit in other manipulations
+  // control PWD state,implicit in other accessors/operations
   getFolder(): string
   setFolder(folder: string): Promise<string>
 
@@ -62,13 +62,13 @@ export interface Store {
   ): Promise<((toFile: string) => Promise<void>) & { fromFile: string }>
   fileStore(
     file: string,
-    allowReplace?: boolean,
+    allowReplace: boolean,
     seek?: number
   ): Promise<Writable>
   fileRetrieve(file: string, seek?: number): Promise<Readable>
 }
 
-type StoreOptions = {
+export type StoreOptions = {
   translateFilename?: (x: string) => string
 }
 export type StoreFactory = ((
@@ -141,15 +141,17 @@ function localStoreFactory(
   function fileExists(file: string): Promise<boolean> {
     // input checked relative to current folder
     // advance status check is inconclusive, check error condition later
-    return fs.stat(path.join(baseFolder, currentFolder, file)).then((fstat) => {
-      if (fstat.isFile()) {
-        return true
-      }
+    return fs
+      .stat(path.join(baseFolder, currentFolder, file))
+      .then((fstat) => {
+        if (fstat.isFile()) {
+          return true
+        }
 
-      throw Object.assign(new Error("not file"), {
-        code: Errors.ENOTFILE,
+        throw Object.assign(new Error("not file"), {
+          code: Errors.ENOTFILE,
+        })
       })
-    })
   }
 
   return {
@@ -273,58 +275,42 @@ function localStoreFactory(
       )
     },
 
-    fileStore(file: string, allowReplace: boolean, seek?: number) {
-      // try to open the file without checking, let it raise error?
+    fileStore(file: string, allowReplace: boolean, seek = 0) {
+      const mode = (() => {
+        if (seek) {
+          if (!allowReplace) {
+            return "wx+"
+          }
+          return "w+"
+        } else if (!allowReplace) {
+          return "wx"
+        }
+        return "w"
+      })()
       return resolveFile(file).then((file) =>
-        fileExists(file)
-          .then(() => {
-            if (allowReplace) {
-              throw "allow file replacement"
-            }
+        fs.open(path.join(baseFolder, currentFolder, file), mode).then((fd) =>
+          fd.createWriteStream({
+            start: seek,
+            autoClose: true,
+            emitClose: true,
           })
-          .then(
-            () => {
-              throw Object.assign(
-                new Error(path.join(baseFolder, currentFolder, file)),
-                {
-                  code: Errors.EEXIST,
-                }
-              )
-            },
-            () =>
-              // file does not exist or replacement is allowed, assuming allowCreate
-              fs
-                .open(
-                  path.join(baseFolder, currentFolder, file),
-                  seek > 0 ? "a+" : "w"
-                )
-                .then((fd) =>
-                  fd.createWriteStream({
-                    start: seek,
-                    autoClose: true,
-                    emitClose: true,
-                  })
-                )
-          )
+        )
       )
     },
 
     fileRetrieve(file: string, seek?: number): Promise<Readable> {
       return resolveFile(file).then((file) =>
-        // try to open the file without checking, let it raise error?
-        fileExists(file).then(() =>
-          fs.open(path.join(baseFolder, currentFolder, file), "r").then((fd) =>
-            fd.createReadStream({
-              start: seek,
-              autoClose: true,
-              emitClose: true,
-              // Use highWaterMark that might hold the whole file in process memory
-              // -mitigate chance of corruption due to overwriting file on disk between chunked reads
-              // -actual memory consumption determined by file size and difference of read and write speeds
-              highWaterMark:
-                parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
-            })
-          )
+        fs.open(path.join(baseFolder, currentFolder, file), "r").then((fd) =>
+          fd.createReadStream({
+            start: seek,
+            autoClose: true,
+            emitClose: true,
+            // Use highWaterMark that might hold the whole file in process memory
+            // -mitigate chance of corruption due to overwriting file on disk between chunked reads
+            // -actual memory consumption determined by file size and difference of read and write speeds
+            highWaterMark:
+              parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
+          })
         )
       )
     },

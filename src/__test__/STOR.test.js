@@ -136,7 +136,7 @@ test("test STOR message", async () => {
   await cmdSocket.end()
 })
 
-test("test STOR message failes due to socket timeout", async () => {
+test("test passive data connection times out", async () => {
   const users = [
     {
       username: "john",
@@ -280,13 +280,11 @@ test("test STOR message overwrite not allowed", async () => {
     '226 Successfully transferred "mytestfile"'
   )
 
-  // complete connection before sending command
-  dataSocket = new ExpectSocket()
-  await dataSocket.connectSync(dataPort, localhost)
-
   cmdSocket.command("LIST")
 
-  const data = await dataSocket.receive()
+  // only connection after command counts
+  dataSocket = new ExpectSocket()
+  const data = await dataSocket.connect(dataPort, localhost).receive()
   expect(data).toMatch("-r--r--r-- 1 ? ?             15")
   expect(data).toMatch("mytestfile")
 

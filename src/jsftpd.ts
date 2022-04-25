@@ -6,7 +6,15 @@
  * @license https://github.com/mailsvb/jsftpd/blob/main/LICENSE MIT License
  */
 
-import { Server, Socket, AddressInfo, createServer, connect } from "net"
+import {
+  Server,
+  Socket,
+  AddressInfo,
+  createServer,
+  connect,
+  ListenOptions,
+  TcpSocketConnectOpts,
+} from "net"
 import {
   SecureContextOptions,
   Server as TlsServer,
@@ -19,7 +27,6 @@ import path from "path"
 import { Readable, Writable } from "stream"
 import { EventEmitter } from "events"
 
-import Deferred from "./deferred"
 import { deasciify, asciify, tee } from "./ascii"
 import internalAuth, {
   AuthHandlersFactory,
@@ -43,7 +50,7 @@ export type ComposableAuthHandlerFactory = (
 export type ComposableStoreFactory = (factory: StoreFactory) => StoreFactory
 
 export type ServerOptions = {
-  port?: number
+  port?: number | ListenOptions
   securePort?: number
   minDataPort?: number
   maxConnections?: number
@@ -179,8 +186,7 @@ export async function createFtpServer({
       fileRename: Store["fileRename"],
       fileSetTimes: Store["fileSetTimes"]
 
-    let passivePort: Server & { next: () => Deferred<Socket | TLSSocket> },
-      activeConnection: Deferred<Socket | TLSSocket>,
+    let dataPort: Server | TcpSocketConnectOpts,
       renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
 
     const localAddr =
@@ -208,8 +214,8 @@ export async function createFtpServer({
     cmdSocket.on("close", () => {
       openSessions.delete(socketKey)
       emitDebugMessage(`FTP connection closed`)
-      if (passivePort) {
-        passivePort.close()
+      if (dataPort instanceof Server) {
+        dataPort.close()
       }
     })
 
@@ -425,7 +431,7 @@ export async function createFtpServer({
           addr = [net0, net1, net2, net3].join("."),
           port = parseInt(portHi, 10) * 256 + parseInt(portLo)
         if (addr.match(/\d{1,3}(\.\d{1,3}){3}/) && port > 0) {
-          setupActiveConnection(addr, port)
+          setupActiveConnect(addr, port)
           client.respond("200", "Port command successful")
         } else {
           client.respond("501", "Port command failed")
@@ -436,7 +442,7 @@ export async function createFtpServer({
        *  PASV
        */
       function PASV(cmd: string) {
-        setPassivePort().then(
+        setupPassiveListen().then(
           (port) => {
             emitDebugMessage(`listening on ${port} for data connection`)
             client.respond(
@@ -468,7 +474,7 @@ export async function createFtpServer({
           addr.match(/\d{1,3}(\.\d{1,3}){3}/) &&
           port > 0
         ) {
-          setupActiveConnection(addr, port)
+          setupActiveConnect(addr, port)
           client.respond("200", "Extended Port command successful")
         } else {
           client.respond("501", "Extended port command failed")
@@ -479,7 +485,7 @@ export async function createFtpServer({
        *  EPSV
        */
       function EPSV(cmd: string) {
-        setPassivePort().then(
+        setupPassiveListen().then(
           (port) => {
             emitDebugMessage(`listening on ${port} for data connection`)
             client.respond(
@@ -617,30 +623,29 @@ export async function createFtpServer({
        *  MLSD
        *  NLST
        */
-      function LIST(cmd: string, folder: string) {
+      function LIST(format: string, folder: string) {
         openDataSocket().then(
           (socket: Writable) =>
             folderList(folder)
-              .then((stats) => stats.map(formatListing(cmd)).join("\r\n"))
+              .then((stats) => stats.map(formatListing(format)))
               .then(
                 (listing) => {
                   emitDebugMessage(
                     `LIST response on data channel\r\n${listing}`
                   )
-                  // ASCII mode does not apply
-                  socket.end(listing + "\r\n")
+                  socket.end(listing.join("\r\n") + "\r\n")
                   client.respond(
                     "226",
                     `Successfully transferred "${getFolder()}"`
                   )
                 },
                 (error) => {
-                  SessionErrorHandler(cmd)(error)
+                  SessionErrorHandler(format)(error)
                   client.respond("501", `Command failed`)
                 }
               ),
           (error: NodeJS.ErrnoException) => {
-            SessionErrorHandler(cmd)(error)
+            SessionErrorHandler(format)(error)
             client.respond("501", "Command failed")
           }
         )
@@ -892,9 +897,9 @@ export async function createFtpServer({
     }
 
     function resetSession() {
-      if (passivePort) {
-        passivePort.close()
-        passivePort = undefined
+      if (dataPort instanceof Server) {
+        dataPort.close()
+        dataPort = undefined
       }
       username = "nobody"
       authenticated = false
@@ -935,64 +940,31 @@ export async function createFtpServer({
       emitLoginEvent()
     }
 
-    function setPassivePort() {
-      activeConnection = undefined
-      if (passivePort) {
-        passivePort.close()
+    function setupPassiveListen() {
+      if (dataPort instanceof Server) {
+        dataPort.close()
       }
 
-      // inbound connections will occur later
-      // extend net.Server to provide a source of Deferred connections
-      passivePort = Object.assign(
+      dataPort =
         "encrypted" in client && protectedMode
-          ? createSecureServer(
-              tlsOptions,
-              onConnection(`secure data connection established`)
-            )
-          : createServer(onConnection(`data connection established`)),
-        {
-          sockets: [],
-          next() {
-            return new Deferred<Socket | TLSSocket>((resolve) => {
-              const waitForSocket = () => {
-                if (this.sockets.length) {
-                  resolve(this.sockets.pop())
-                } else {
-                  // TODO, give up after a reasonable period; especially if the session ends
-                  setImmediate(waitForSocket) // <-- hoping order of connections and callbacks remains aligned
-                }
-              }
-              waitForSocket()
-            })
-          },
-        }
-      )
-      passivePort.on("error", SessionErrorHandler("passive data port"))
-      passivePort.maxConnections = 1
+          ? createSecureServer(tlsOptions)
+          : createServer()
+      dataPort.maxConnections = 1
 
-      function onConnection(connectionMsg: string) {
-        return function setupSocket(socket: Socket | TLSSocket) {
-          emitDebugMessage(connectionMsg)
-          socket.on("error", SessionErrorHandler("passive data connection"))
-          socket.on("close", () => {
-            emitDebugMessage(`data connection has closed`)
+      dataPort.on("error", SessionErrorHandler("passive data port"))
+      if ("dataTimeout" in options || "timeout" in options) {
+        dataPort.on("connection", (socket) => {
+          socket.setTimeout(options.dataTimeout ?? options.timeout, () => {
+            socket.destroy()
           })
-
-          if ("dataTimeout" in options || "timeout" in options) {
-            socket.setTimeout(options.dataTimeout || options.timeout, () => {
-              socket.destroy()
-            })
-          }
-
-          this.sockets.push(socket)
-        }
+        })
       }
 
       return findAvailablePort().then(
         (port) =>
           new Promise<AddressInfo["port"]>((resolve, reject) => {
-            passivePort.once("error", reject)
-            passivePort.listen(port, function () {
+            ;(dataPort as Server).once("error", reject)
+            ;(dataPort as Server).listen(port, function () {
               resolve(this.address().port)
             })
           })
@@ -1017,14 +989,14 @@ export async function createFtpServer({
 
           function checkAvailablePort(port: number) {
             const server = createServer()
+            server.once("close", function () {
+              resolve(port)
+            })
             server.once("error", function () {
               if (port < minDataPort + maxConnections) {
                 return checkAvailablePort(++port) // recurse
               }
               reject(Error("exceeded maxConnections"))
-            })
-            server.once("close", function () {
-              resolve(port)
             })
 
             server.listen(port, function () {
@@ -1035,56 +1007,70 @@ export async function createFtpServer({
       }
     }
 
-    function setupActiveConnection(addr: string, port: number) {
-      if (passivePort) {
-        passivePort.close()
-        passivePort = undefined
+    function setupActiveConnect(host: string, port: number) {
+      if (dataPort instanceof Server) {
+        dataPort.close()
+        dataPort = undefined
       }
 
-      // defer initiating outbound connection
-      activeConnection = new Deferred<Socket | TLSSocket>(function (
-        resolve: (value: Socket | TLSSocket) => void
-      ) {
-        emitDebugMessage(
-          `client data socket addr[${addr}] port[${port}] secure[${
-            "encrypted" in client && protectedMode
-          }]`
-        )
-        let socket = connect(port, addr, () => {
-          emitDebugMessage(`data connection established`)
-          if ("encrypted" in client && protectedMode) {
-            socket = new TLSSocket(socket, {
-              secureContext: tlsContext,
-              isServer: true,
-            })
-            emitDebugMessage(`data connection secured`)
-          }
-
-          if ("dataTimeout" in options || "timeout" in options) {
-            socket.setTimeout(options.dataTimeout || options.timeout, () => {
-              socket.destroy()
-            })
-          }
-
-          resolve(socket)
-        })
-
-        socket.on("error", SessionErrorHandler("active data connection"))
-        socket.on("close", () => {
-          emitDebugMessage(`data connection has closed`)
-        })
-      })
+      dataPort = { host, port }
     }
 
     function openDataSocket() {
-      if (passivePort) {
+      if (dataPort instanceof Server) {
         client.respond("150", "Awaiting passive connection")
-        return passivePort.next()
+        return new Promise((resolve, reject) => {
+          // TODO: reject if port is not accepting connections
+          // TODO: reject if no connection within a reasonable time
+
+          ;(dataPort as Server).once(
+            "addContext" in dataPort ? "secureConnection" : "connection",
+            (socket) => {
+              emitDebugMessage(`data connection established`)
+              socket.on("error", SessionErrorHandler("passive data connection"))
+              socket.on("close", () => {
+                emitDebugMessage(`data connection has closed`)
+              })
+
+              resolve(socket)
+            }
+          )
+        })
       }
 
-      if (activeConnection) {
+      if (dataPort instanceof Object) {
         client.respond("150", "Opening data connection")
-        return activeConnection.clone()
+        return new Promise((resolve, reject) => {
+          const { host: addr, port } = dataPort as TcpSocketConnectOpts
+          emitDebugMessage(
+            `client data socket addr[${addr}] port[${port}] secure[${
+              "encrypted" in client && protectedMode
+            }]`
+          )
+          let socket = connect(dataPort as TcpSocketConnectOpts, () => {
+            emitDebugMessage(`data connection established`)
+            if ("encrypted" in client && protectedMode) {
+              socket = new TLSSocket(socket, {
+                secureContext: tlsContext,
+                isServer: true,
+              })
+              emitDebugMessage(`data connection secured`)
+            }
+
+            if ("dataTimeout" in options || "timeout" in options) {
+              socket.setTimeout(options.dataTimeout || options.timeout, () => {
+                socket.destroy()
+              })
+            }
+
+            resolve(socket)
+          })
+
+          socket.on("error", SessionErrorHandler("active data connection"))
+          socket.on("close", () => {
+            emitDebugMessage(`data connection has closed`)
+          })
+        })
       }
 
       return Promise.reject(Error("active or passive mode not selected"))

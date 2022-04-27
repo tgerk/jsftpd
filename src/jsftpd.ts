@@ -190,8 +190,8 @@ export async function createFtpServer({
     },
 
     reloadAuth(options: AuthOptions) {
-      ({ userLoginType, userAuthenticate } = authFactory(options))
-    }
+      ;({ userLoginType, userAuthenticate } = authFactory(options))
+    },
   })
 
   function SessionHandler(cmdSocket: Socket | TLSSocket) {

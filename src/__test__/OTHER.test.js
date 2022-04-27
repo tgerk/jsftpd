@@ -112,7 +112,7 @@ test("ftp server fails when basefolder does not exist", async () => {
   try {
     server = await createFtpServer({ basefolder: "/NOTEXISTING" })
   } catch (err) {
-    expect(err.message).toMatch("Basefolder must exist")
+    expect(err.message).toMatch("Base folder must exist")
   }
 })
 

@@ -61,6 +61,9 @@ export type ServerOptions = {
   auth?: ComposableAuthHandlerFactory
   store?: ComposableStoreFactory
 }
+interface FTPCommandTable {
+  [fn: string]: (cmd: string, arg: string) => void
+}
 
 export async function createFtpServer({
   tls: tlsOptions,
@@ -106,65 +109,121 @@ export async function createFtpServer({
     useTls = "securePort" in options
 
   // compose auth and storage backend handler factories
-  const authBackend = auth?.(internalAuth) ?? internalAuth,
-    { userLoginType, userAuthenticate } = authBackend(options)
+  const authFactory = auth?.(internalAuth) ?? internalAuth,
+    { userLoginType, userAuthenticate } = authFactory(options)
 
-  const storeBackend = store?.(localStore) ?? localStore
-  if (!storeBackend.baseFolderExists(basefolder)) {
-    throw new Error("Basefolder must exist")
-  }
+  const localStoreFactory = localStore(basefolder),
+    storeFactory = store?.(localStoreFactory) ?? localStoreFactory
 
   // setup FTP on TCP
   const tcpServer = createServer(SessionHandler)
-  tcpServer.on("error", ServerErrorHandler)
-  tcpServer.on("listening", () => {
-    emitListenEvent("tcp", tcpServer.address() as AddressInfo)
-  })
-
-  // concurrent connections, distinct from the listen backlog, excess connections are immediately closed
-  tcpServer.maxConnections = options.maxConnections
 
   // setup FTP on TLS
   let tlsServer: TlsServer
   if (useTls) {
     tlsServer = createSecureServer(tlsOptions, SessionHandler)
-    tlsServer.on("error", ServerErrorHandler)
-    tlsServer.on("listening", function () {
-      emitListenEvent("tls", tlsServer.address() as AddressInfo)
-    })
-
-    // concurrent connections, distinct from the listen backlog, excess connections are immediately closed
-    tlsServer.maxConnections = options.maxConnections
   }
 
   // track client sessions
-  let lastSessionKey = 0
-  const openSessions: Map<number, Socket> = new Map()
+  let clientCounter = 0
+  const clientSessions: Set<Socket> = new Set()
 
   const emitter = new EventEmitter()
   return Object.assign(emitter, {
     start() {
-      tcpServer.listen(options.port)
-      useTls && tlsServer.listen(options.securePort)
+      setupServer(tcpServer)
+      tcpServer.listen(options.port, function () {
+        emitListenEvent.call(this, "tcp")
+      })
+
+      if (useTls) {
+        setupServer(tlsServer)
+        tlsServer.listen(options.securePort, function () {
+          emitListenEvent.call(this, "tls")
+        })
+      }
+
+      function setupServer(server: Server | TlsServer) {
+        // concurrent connections, distinct from the listen backlog
+        // (excess connections are immediately closed after connecting)
+        server.maxConnections = options.maxConnections
+        server.on(
+          "error",
+          function ServerErrorHandler(err: NodeJS.ErrnoException) {
+            emitter.emit(
+              "error",
+              `server error ${getDateForLogs()} ${util.inspect(err, {
+                showHidden: false,
+                depth: null,
+                breakLength: Infinity,
+              })}`
+            )
+          }
+        )
+      }
+
+      function emitListenEvent(this: Server, protocol: string) {
+        const address = this.address() as AddressInfo
+        emitter.emit("listen", {
+          protocol,
+          ...address,
+          basefolder: localStore.getBaseFolder(),
+        })
+      }
     },
 
     stop() {
-      for (const session of openSessions.values()) {
+      for (const session of clientSessions) {
         session.destroy()
       }
+
       tcpServer.close()
       useTls && tlsServer.close()
     },
 
     cleanup() {
-      storeBackend.baseFolderCleanup(basefolder)
+      localStore.cleanup()
     },
   })
 
   function SessionHandler(cmdSocket: Socket | TLSSocket) {
-    const socketKey = ++lastSessionKey
-    openSessions.set(socketKey, cmdSocket)
+    // setup client
+    clientSessions.add(cmdSocket)
+    cmdSocket.on("close", function () {
+      clientSessions.delete(this)
+      emitDebugMessage(`FTP connection closed`)
+      if (dataPort instanceof Server) {
+        dataPort.close()
+      }
+    })
+    cmdSocket.on("error", SessionErrorHandler("command socket"))
+    cmdSocket.on("data", CmdHandler)
 
+    if ("timeout" in options) {
+      cmdSocket.setTimeout(options.timeout, () => {
+        authenticated && emitLogoffEvent()
+        client.respond("221", "Goodbye")
+        cmdSocket.end()
+      })
+    }
+
+    const clientInfo = `[(${++clientCounter}) ${
+      cmdSocket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
+    }:${cmdSocket.remotePort}]`
+
+    let client = Object.assign(cmdSocket, {
+      respond: function respond(
+        this: Socket,
+        code: string,
+        message: string,
+        delimiter = " "
+      ) {
+        emitLogMessage(`<<< ${code} ${message}`)
+        this.write(`${code}${delimiter}${message}\r\n`)
+      },
+    })
+
+    // setup client session
     let username = "nobody",
       authenticated = false,
       permissions: Permissions
@@ -189,108 +248,14 @@ export async function createFtpServer({
     let dataPort: Server | TcpSocketConnectOpts,
       renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
 
-    const localAddr =
-        cmdSocket.localAddress?.replace(/::ffff:/g, "") ?? "unknown",
-      remoteAddr =
-        cmdSocket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown",
-      remoteInfo = `[(${socketKey}) ${remoteAddr}:${cmdSocket.remotePort}]`
-
-    function respond(
-      this: Socket,
-      code: string,
-      message: string,
-      delimiter = " "
-    ) {
-      emitLogMessage(`<<< ${code} ${message}`)
-      this.write(`${code}${delimiter}${message}\r\n`)
-    }
-    let client = Object.assign(cmdSocket, { respond })
-
     emitDebugMessage(`established FTP connection`)
     client.respond("220", "Welcome")
 
-    cmdSocket.on("error", SessionErrorHandler("command socket"))
-    cmdSocket.on("data", CmdHandler)
-    cmdSocket.on("close", () => {
-      openSessions.delete(socketKey)
-      emitDebugMessage(`FTP connection closed`)
-      if (dataPort instanceof Server) {
-        dataPort.close()
-      }
-    })
-
-    if ("timeout" in options) {
-      cmdSocket.setTimeout(options.timeout, () => {
-        authenticated && emitLogoffEvent()
-        client.respond("221", "Goodbye")
-        cmdSocket.end()
-      })
-    }
-
-    function CmdHandler(data: string) {
-      interface FTPCommandTable {
-        [fn: string]: (cmd: string, arg: string) => void
-      }
-      const preAuthMethods: FTPCommandTable = { USER, PASS, AUTH }
-      const authenticatedMethods: FTPCommandTable = {
-        QUIT,
-        PWD,
-        CLNT,
-        PBSZ,
-        OPTS,
-        PROT,
-        FEAT,
-        CWD,
-        SIZE,
-        DELE,
-        RMD,
-        RMDA: RMD,
-        MKD,
-        LIST,
-        MLSD: LIST,
-        NLST: LIST,
-        PORT,
-        PASV,
-        EPRT,
-        EPSV,
-        RETR,
-        REST,
-        STOR,
-        SYST,
-        TYPE,
-        RNFR,
-        RNTO,
-        MFMT,
-        MDTM: MFMT,
-      }
-
-      try {
-        data = data.toString()
-        const [cmd, ...args] = data.trim().split(/\s+/),
-          arg = args.join(" ")
-        emitLogMessage(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : arg}]`)
-        if (authenticated) {
-          if (cmd in authenticatedMethods) {
-            authenticatedMethods[cmd as keyof FTPCommandTable](cmd, arg)
-          } else {
-            client.respond("500", "Command not implemented")
-          }
-        } else if (cmd in preAuthMethods) {
-          preAuthMethods[cmd as keyof FTPCommandTable](cmd, arg)
-        } else {
-          client.respond("530", "Not logged in")
-          cmdSocket.end()
-        }
-      } catch (err) {
-        SessionErrorHandler(`exception on command [${data}]`)(err)
-        client.respond("550", "Unexpected server error")
-        cmdSocket.end()
-      }
-
+    const preAuthMethods: FTPCommandTable = {
       /*
        *  USER
        */
-      function USER(_cmd: string, user: string) {
+      USER: function (_cmd: string, user: string) {
         authenticated = false
         switch (
           userLoginType(client, user, (user) => {
@@ -310,12 +275,12 @@ export async function createFtpServer({
             client.respond("530", "Not logged in")
             break
         }
-      }
+      },
 
       /*
        *  PASS
        */
-      function PASS(_cmd: string, password: string) {
+      PASS: function (_cmd: string, password: string) {
         switch (
           userAuthenticate(client, username, password, (credential) => {
             setUser(credential)
@@ -329,61 +294,66 @@ export async function createFtpServer({
           case LoginType.None:
           default:
             client.respond("530", "Username or password incorrect")
-            cmdSocket.end()
+            client.end()
         }
-      }
+      },
 
       /*
        *  AUTH (upgrade command socket security)
        */
-      function AUTH(_cmd: string, auth: string) {
+      AUTH: function (_cmd: string, auth: string) {
         switch (auth) {
           case "TLS":
           case "SSL":
+            client.respond("234", `Using authentication type ${auth}`)
             resetSession() // reset session variables (User, CWD, Mode, etc.  RFC-4217)
 
-            client.respond("234", `Using authentication type ${auth}`)
-            cmdSocket = new TLSSocket(cmdSocket, {
-              secureContext: tlsContext,
-              isServer: true,
-            })
+            // Start TLS
+            client = Object.assign(
+              new TLSSocket(client, {
+                secureContext: tlsContext,
+                isServer: true,
+              }),
+              { respond: client.respond }
+            )
+            client.on("data", CmdHandler)
             emitDebugMessage(`command connection secured`)
-            client = Object.assign(cmdSocket, { respond })
-            cmdSocket.on("data", CmdHandler)
             break
           default:
             client.respond("504", `Unsupported auth type ${auth}`)
         }
-      }
+      },
+    }
 
+    const authenticatedMethods: FTPCommandTable = {
       /*
        *  QUIT
        */
-      function QUIT() {
+      QUIT: function () {
         authenticated && emitLogoffEvent()
         client.respond("221", "Goodbye")
-        cmdSocket.end()
-      }
+        client.end()
+      },
 
       /*
        *  CLNT
        */
-      function CLNT() {
+      CLNT: function () {
         client.respond("200", "Don't care")
-      }
+      },
 
       /*
        *  PBSZ (set protection buffer size, irrelevant to SSL private mode)
        */
-      function PBSZ(_cmd: string, size: string) {
+      PBSZ: function (_cmd: string, size: string) {
         pbszReceived = true
         client.respond("200", `PBSZ=${size}`)
-      }
+      },
 
       /*
        *  PROT
        */
-      function PROT(_cmd: string, protection: string) {
+      PROT: function (_cmd: string, protection: string) {
         if (!pbszReceived) {
           client.respond("503", "PBSZ missing")
         } else
@@ -396,12 +366,12 @@ export async function createFtpServer({
             default:
               client.respond("534", "Protection level must be C or P")
           }
-      }
+      },
 
       /*
        *  OPTS
        */
-      function OPTS(_cmd: string, opt: string) {
+      OPTS: function (_cmd: string, opt: string) {
         opt = opt.toLowerCase()
         if (opt === "utf8 on") {
           client.respond("200", "UTF8 ON")
@@ -410,23 +380,23 @@ export async function createFtpServer({
         } else {
           client.respond("451", "Not supported")
         }
-      }
+      },
 
       /*
        *  FEAT
        */
-      function FEAT() {
+      FEAT: function () {
         const features = Object.keys(preAuthMethods)
           .concat(Object.keys(authenticatedMethods))
           .join("\r\n ")
           .replace("AUTH", "AUTH TLS\r\n AUTH SSL")
         client.respond("211", `Features:\r\n ${features}\r\n211 End`, "-")
-      }
+      },
 
       /*
        *  PORT
        */
-      function PORT(_cmd: string, spec: string) {
+      PORT: function (_cmd: string, spec: string) {
         const [net0, net1, net2, net3, portHi, portLo] = spec.split(","),
           addr = [net0, net1, net2, net3].join("."),
           port = parseInt(portHi, 10) * 256 + parseInt(portLo)
@@ -436,12 +406,12 @@ export async function createFtpServer({
         } else {
           client.respond("501", "Port command failed")
         }
-      }
+      },
 
       /*
        *  PASV
        */
-      function PASV(cmd: string) {
+      PASV: function (cmd: string) {
         setupPassiveListen().then(
           (port) => {
             emitDebugMessage(`listening on ${port} for data connection`)
@@ -449,7 +419,10 @@ export async function createFtpServer({
               "227",
               util.format(
                 "Entering passive mode (%s,%d,%d)",
-                localAddr.split(".").join(","),
+                client.localAddress
+                  .replace(/::ffff:/g, "")
+                  .split(".")
+                  .join(","),
                 (port / 256) | 0,
                 port % 256
               )
@@ -460,12 +433,12 @@ export async function createFtpServer({
             client.respond("501", "Passive command failed")
           }
         )
-      }
+      },
 
       /*
        *  EPRT
        */
-      function EPRT(_cmd: string, spec: string) {
+      EPRT: function (_cmd: string, spec: string) {
         const addrSpec = spec.split("|"),
           addr = addrSpec[2],
           port = parseInt(addrSpec[3], 10)
@@ -479,12 +452,12 @@ export async function createFtpServer({
         } else {
           client.respond("501", "Extended port command failed")
         }
-      }
+      },
 
       /*
        *  EPSV
        */
-      function EPSV(cmd: string) {
+      EPSV: function (cmd: string) {
         setupPassiveListen().then(
           (port) => {
             emitDebugMessage(`listening on ${port} for data connection`)
@@ -498,19 +471,19 @@ export async function createFtpServer({
             client.respond("501", "Extended passive command failed")
           }
         )
-      }
+      },
 
       /*
        *  SYST
        */
-      function SYST() {
+      SYST: function () {
         client.respond("215", process.env["OS"] ?? "UNIX")
-      }
+      },
 
       /*
        *  TYPE
        */
-      function TYPE(_cmd: string, tfrType: string) {
+      TYPE: function (_cmd: string, tfrType: string) {
         if (tfrType === "A") {
           asciiTxfrMode = true
           client.respond("200", "Type set to ASCII")
@@ -518,12 +491,12 @@ export async function createFtpServer({
           asciiTxfrMode = false
           client.respond("200", "Type set to BINARY")
         }
-      }
+      },
 
       /*
        *  REST
        */
-      function REST(_cmd: string, arg: string) {
+      REST: function (_cmd: string, arg: string) {
         const offset = parseInt(arg, 10)
         if (offset >= 0) {
           dataOffset = offset
@@ -532,19 +505,19 @@ export async function createFtpServer({
           dataOffset = 0
           client.respond("550", "Wrong restart offset")
         }
-      }
+      },
 
       /*
        *  PWD
        */
-      function PWD() {
+      PWD: function () {
         client.respond("257", `"${getFolder()}" is current directory`)
-      }
+      },
 
       /*
        *  CWD
        */
-      function CWD(cmd: string, folder: string) {
+      CWD: function (cmd: string, folder: string) {
         setFolder(folder).then(
           (folder) =>
             client.respond(
@@ -564,13 +537,12 @@ export async function createFtpServer({
             client.respond("530", "CWD not successful")
           }
         )
-      }
-
+      },
       /*
        *  RMD
        *  RMDA
        */
-      function RMD(cmd: string, folder: string) {
+      RMD: function (cmd: string, folder: string) {
         if (!permissions.allowFolderDelete || folder === "/") {
           client.respond("550", "Permission denied")
         } else {
@@ -592,12 +564,12 @@ export async function createFtpServer({
             }
           )
         }
-      }
+      },
 
       /*
        *  MKD
        */
-      function MKD(cmd: string, folder: string) {
+      MKD: function (cmd: string, folder: string) {
         if (!permissions.allowFolderCreate) {
           client.respond("550", "Permission denied")
         } else {
@@ -616,14 +588,14 @@ export async function createFtpServer({
             }
           )
         }
-      }
+      },
 
       /*
        *  LIST
        *  MLSD
        *  NLST
        */
-      function LIST(format: string, folder: string) {
+      LIST: function (format: string, folder: string) {
         openDataSocket().then(
           (socket: Writable) =>
             folderList(folder)
@@ -631,7 +603,7 @@ export async function createFtpServer({
               .then(
                 (listing) => {
                   emitDebugMessage(
-                    `LIST response on data channel\r\n${listing}`
+                    `LIST response on data channel\r\n${listing.join("\r\n")}`
                   )
                   socket.end(listing.join("\r\n") + "\r\n")
                   client.respond(
@@ -649,12 +621,12 @@ export async function createFtpServer({
             client.respond("501", "Command failed")
           }
         )
-      }
+      },
 
       /*
        *  SIZE
        */
-      function SIZE(cmd: string, file: string) {
+      SIZE: function (cmd: string, file: string) {
         fileSize(file).then(
           (size) => {
             client.respond("213", size.toString())
@@ -669,12 +641,12 @@ export async function createFtpServer({
             client.respond("501", "Command failed")
           }
         )
-      }
+      },
 
       /*
        *  DELE
        */
-      function DELE(cmd: string, file: string) {
+      DELE: function (cmd: string, file: string) {
         if (!permissions.allowFileDelete) {
           client.respond("550", "Permission denied")
         } else {
@@ -693,12 +665,12 @@ export async function createFtpServer({
             }
           )
         }
-      }
+      },
 
       /*
        *  RETR
        */
-      function RETR(cmd: string, file: string) {
+      RETR: function (cmd: string, file: string) {
         if (!permissions.allowFileRetrieve) {
           client.respond("550", `Transfer failed "${file}"`)
         } else {
@@ -758,12 +730,12 @@ export async function createFtpServer({
             }
           )
         }
-      }
+      },
 
       /*
        *  STOR
        */
-      function STOR(cmd: string, file: string) {
+      STOR: function (cmd: string, file: string) {
         if (!permissions.allowFileOverwrite && !permissions.allowFileCreate) {
           client.respond("550", `Transfer failed "${file}"`)
         } else {
@@ -821,12 +793,12 @@ export async function createFtpServer({
             }
           )
         }
-      }
+      },
 
       /*
        *  RNFR
        */
-      function RNFR(_cmd: string, file: string) {
+      RNFR: function (_cmd: string, file: string) {
         if (!permissions.allowFileRename) {
           client.respond("550", "Permission denied")
         } else {
@@ -840,12 +812,12 @@ export async function createFtpServer({
             }
           )
         }
-      }
+      },
 
       /*
        *  RNTO
        */
-      function RNTO(cmd: string, file: string) {
+      RNTO: function (cmd: string, file: string) {
         if (!permissions.allowFileRename) {
           client.respond("550", "Permission denied")
         } else if (!renameFileToFn) {
@@ -871,12 +843,12 @@ export async function createFtpServer({
               renameFileToFn = undefined
             })
         }
-      }
+      },
 
       /*
        *  MFMT
        */
-      function MFMT(cmd: string, arg: string) {
+      MFMT: function (cmd: string, arg: string) {
         const [time, ...rest] = arg.split(/\s+/),
           mtime = getDateForMFMT(time)
         fileSetTimes(rest.join(" "), mtime).then(
@@ -893,8 +865,13 @@ export async function createFtpServer({
             client.respond("501", "Command failed")
           }
         )
-      }
+      },
     }
+
+    authenticatedMethods.RMDA = authenticatedMethods.RMD
+    authenticatedMethods.MLSD = authenticatedMethods.LIST
+    authenticatedMethods.NLST = authenticatedMethods.LIST
+    authenticatedMethods.MDTM = authenticatedMethods.MFMT
 
     function resetSession() {
       if (dataPort instanceof Server) {
@@ -935,7 +912,7 @@ export async function createFtpServer({
         fileStore,
         fileRename,
         fileSetTimes,
-      } = storeBackend(credential, client))
+      } = storeFactory(credential, client))
 
       emitLoginEvent()
     }
@@ -1077,33 +1054,33 @@ export async function createFtpServer({
     }
 
     function emitLogMessage(msg: string | { toString: () => string }) {
-      emitter.emit("log", `${getDateForLogs()} ${remoteInfo} ${msg}`)
+      emitter.emit("log", `${getDateForLogs()} ${clientInfo} ${msg}`)
     }
 
     function emitDebugMessage(msg: string | { toString: () => string }) {
-      emitter.emit("debug", `${getDateForLogs()} ${remoteInfo} ${msg}`)
+      emitter.emit("debug", `${getDateForLogs()} ${clientInfo} ${msg}`)
     }
 
     function emitLoginEvent() {
       emitter.emit("login", {
-        remoteInfo,
         username,
-        openSessions: Array.from(openSessions.keys()).length,
+        clientInfo,
+        openSessions: Array.from(clientSessions.values()).length,
       })
     }
 
     function emitLogoffEvent() {
       emitter.emit("logoff", {
-        remoteInfo,
         username,
-        openSessions: Array.from(openSessions.keys()).length - 1,
+        clientInfo,
+        openSessions: Array.from(clientSessions.values()).length - 1,
       })
     }
 
     function emitDownloadEvent(file: string) {
       emitter.emit("download", {
-        remoteInfo,
         username,
+        clientInfo,
         file: path.join(getFolder(), file),
       })
     }
@@ -1111,7 +1088,7 @@ export async function createFtpServer({
     function emitUploadEvent(file: string) {
       emitter.emit("upload", {
         username,
-        remoteInfo,
+        clientInfo,
         file: path.join(getFolder(), file),
       })
     }
@@ -1119,7 +1096,7 @@ export async function createFtpServer({
     function emitRenameEvent(fileFrom: string, fileTo: string) {
       emitter.emit("rename", {
         username,
-        remoteInfo,
+        clientInfo,
         fileFrom: path.join("/", fileFrom),
         fileTo: path.join(getFolder(), fileTo),
       })
@@ -1129,7 +1106,7 @@ export async function createFtpServer({
       return function (error: NodeJS.ErrnoException) {
         emitter.emit(
           "warn", // don't say "error" -- Jest somehow detects "error" events that don't have a handler
-          `${socketType} error ${remoteInfo} ${getDateForLogs()} ${util.inspect(
+          `${socketType} error ${clientInfo} ${getDateForLogs()} ${util.inspect(
             error,
             {
               showHidden: false,
@@ -1140,31 +1117,37 @@ export async function createFtpServer({
         )
       }
     }
-  }
 
-  function emitListenEvent(protocol: string, address: AddressInfo) {
-    emitter.emit("listen", {
-      protocol,
-      address: (address as AddressInfo).address,
-      port: (address as AddressInfo).port,
-      basefolder: storeBackend.baseFolder(basefolder),
-    })
-  }
+    function CmdHandler(buf: Buffer) {
+      try {
+        const data = buf.toString(),
+          [cmd, ...args] = data.trim().split(/\s+/),
+          arg = args.join(" ")
+        emitLogMessage(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : arg}]`)
 
-  function ServerErrorHandler(err: NodeJS.ErrnoException) {
-    emitter.emit(
-      "error",
-      `server error ${getDateForLogs()} ${util.inspect(err, {
-        showHidden: false,
-        depth: null,
-        breakLength: Infinity,
-      })}`
-    )
+        if (authenticated) {
+          if (cmd in authenticatedMethods) {
+            authenticatedMethods[cmd as keyof FTPCommandTable](cmd, arg)
+          } else {
+            client.respond("500", "Command not implemented")
+          }
+        } else if (cmd in preAuthMethods) {
+          preAuthMethods[cmd as keyof FTPCommandTable](cmd, arg)
+        } else {
+          client.respond("530", "Not logged in")
+          client.end()
+        }
+      } catch (err) {
+        SessionErrorHandler(`exception on command [${buf}]`)(err)
+        client.respond("550", "Unexpected server error")
+        client.end()
+      }
+    }
   }
 }
 export default createFtpServer
 
-// formatter utilities: time/date, folder listing
+// utilities
 function formatListing(format = "LIST") {
   switch (format) {
     case "NLST":

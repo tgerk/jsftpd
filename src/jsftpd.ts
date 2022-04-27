@@ -26,8 +26,11 @@ import util from "util"
 import path from "path"
 import { Readable, Writable } from "stream"
 import { EventEmitter } from "events"
+import { readFile } from "fs/promises"
 
-import { deasciify, asciify, tee } from "./ascii"
+import { deasciify, asciify } from "./ascii"
+// import { tee } from "./ascii"
+
 import internalAuth, {
   AuthHandlersFactory,
   AuthOptions,
@@ -35,13 +38,13 @@ import internalAuth, {
   Permissions,
   Credential,
 } from "./auth"
+
 import localStore, {
   StoreFactory,
   Store,
   Stats,
   Errors as StoreErrors,
 } from "./store"
-import { readFileSync } from "fs"
 
 export type ComposableAuthHandlerFactory = (
   factory: AuthHandlersFactory
@@ -85,21 +88,22 @@ export async function createFtpServer({
     ...tlsOptions,
   }
 
-  // because we implement FTPS (via AUTH TLS), but not necessarily SFTP (default port 990)
-  //  use certs module to provide a backup self-signed certificate
   if (!("key" in tlsOptions) || !("cert" in tlsOptions)) {
+    // because we implement FTPS (via AUTH TLS), but not necessarily SFTP (default port 990)
+    //  use certs module to provide a backup self-signed certificate
     const { cert, key } = await import("./cert")
     tlsOptions.cert = cert
     tlsOptions.key = key
   } else {
+    // TODO: expand to support all schemes fs/promises.readFile can handle
     if (tlsOptions.cert.toString().startsWith("file:")) {
-      tlsOptions.cert = readFileSync(tlsOptions.cert.toString().substring(5))
+      tlsOptions.cert = await readFile(tlsOptions.cert.toString().substring(5))
     }
     if (tlsOptions.key.toString().startsWith("file:")) {
-      tlsOptions.key = readFileSync(tlsOptions.key.toString().substring(5))
+      tlsOptions.key = await readFile(tlsOptions.key.toString().substring(5))
     }
     if (tlsOptions.passphrase.startsWith("file:")) {
-      tlsOptions.passphrase = readFileSync(
+      tlsOptions.passphrase = await readFile(
         tlsOptions.passphrase.substring(5)
       ).toString()
     }
@@ -109,8 +113,8 @@ export async function createFtpServer({
     useTls = "securePort" in options
 
   // compose auth and storage backend handler factories
-  const authFactory = auth?.(internalAuth) ?? internalAuth,
-    { userLoginType, userAuthenticate } = authFactory(options)
+  const authFactory = auth?.(internalAuth) ?? internalAuth
+  let { userLoginType, userAuthenticate } = authFactory(options)
 
   const localStoreFactory = localStore(basefolder),
     storeFactory = store?.(localStoreFactory) ?? localStoreFactory
@@ -184,6 +188,10 @@ export async function createFtpServer({
     cleanup() {
       localStore.cleanup()
     },
+
+    reloadAuth(options: AuthOptions) {
+      ({ userLoginType, userAuthenticate } = authFactory(options))
+    }
   })
 
   function SessionHandler(cmdSocket: Socket | TLSSocket) {
@@ -703,7 +711,7 @@ export async function createFtpServer({
                       )
                     })
                     readStream
-                      .pipe(tee(emitDebugMessage)) // log outbound stream
+                      // .pipe(tee(emitDebugMessage)) // log outbound stream
                       .pipe(
                         asciiTxfrMode
                           ? asciify().pipe(writeSocket)
@@ -766,7 +774,7 @@ export async function createFtpServer({
                       )
                     })
                     readSocket
-                      .pipe(tee(emitDebugMessage)) // log inbound stream
+                      // .pipe(tee(emitDebugMessage)) // log inbound stream
                       .pipe(
                         asciiTxfrMode
                           ? deasciify().pipe(writeStream)

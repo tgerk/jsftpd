@@ -54,275 +54,269 @@ export type StoreFactory = (
   options?: StoreOptions
 ) => Store
 
-// module property & utility
+// module state
 let defaultBaseFolder = path.join(process.cwd(), "__ftproot__"),
-  cleanup: () => void
+  cleanupBaseFolder: () => void
 
-export default Object.assign(
-  (baseFolder: string) => {
-    if (baseFolder) {
-      if (existsSync(baseFolder)) {
-        defaultBaseFolder = baseFolder
-      } else {
-        throw Object.assign(Error(`Base folder must exist`), {
-          code: Errors.ENOTDIR,
-        })
-      }
-    } else if (!existsSync(defaultBaseFolder)) {
-      mkdirSync(defaultBaseFolder)
-      cleanup = function () {
-        rmSync(defaultBaseFolder, { force: true, recursive: true })
-      }
+export default function (baseFolder: string) {
+  if (baseFolder) {
+    if (existsSync(baseFolder)) {
+      defaultBaseFolder = baseFolder
+    } else {
+      throw Object.assign(Error(`Base folder must exist`), {
+        code: Errors.ENOTDIR,
+      })
+    }
+  } else if (!existsSync(defaultBaseFolder)) {
+    mkdirSync(defaultBaseFolder)
+    cleanupBaseFolder = function () {
+      rmSync(defaultBaseFolder, { force: true, recursive: true })
+    }
+  }
+
+  return function localStoreFactory(
+    user: Credential,
+    client: Socket | TLSSocket,
+    options: StoreOptions = {}
+  ) {
+    let currentFolder = "/"
+
+    const { basefolder: baseFolder = defaultBaseFolder } = user,
+      { translateFilename } = options
+    if (baseFolder != defaultBaseFolder && !existsSync(baseFolder)) {
+      throw Object.assign(Error(`User's base folder must exist`), {
+        code: Errors.ENOTDIR,
+      })
     }
 
-    return function localStoreFactory(
-      user: Credential,
-      client: Socket | TLSSocket,
-      options: StoreOptions = {}
-    ) {
-      let currentFolder = "/"
+    function resolveFolder(folder: string): Promise<string> {
+      // result relative to base folder
+      folder =
+        folder.charAt(0) === "/"
+          ? path.join(baseFolder, folder)
+          : path.join(baseFolder, currentFolder, folder)
+      return new Promise((resolve) => {
+        if (folder.startsWith(baseFolder)) {
+          resolve("/" + path.relative(baseFolder, folder))
+        }
+        resolve("/") // no jailbreak!
+      })
+    }
 
-      const { basefolder: baseFolder = defaultBaseFolder } = user,
-        { translateFilename } = options
-      if (baseFolder != defaultBaseFolder && !existsSync(baseFolder)) {
-        throw Object.assign(Error(`User's base folder must exist`), {
+    function resolveFile(file: string): Promise<string> {
+      // result relative to current folder
+      file =
+        file.charAt(0) === "/"
+          ? path.join(baseFolder, file)
+          : path.join(baseFolder, currentFolder, file)
+      file = translateFilename?.(file) ?? file
+      return new Promise((resolve, reject) => {
+        if (file.startsWith(baseFolder)) {
+          file = path.relative(path.join(baseFolder, currentFolder), file)
+          resolve(file)
+        }
+        reject() // no jailbreak!
+      })
+    }
+
+    function folderExists(folder: string): Promise<boolean> {
+      // advance status check is inconclusive, check error condition later
+      return fs.stat(path.join(baseFolder, folder)).then((fstat) => {
+        if (fstat.isDirectory()) {
+          return true
+        }
+
+        throw Object.assign(new Error("not directory"), {
           code: Errors.ENOTDIR,
         })
-      }
+      })
+    }
 
-      function resolveFolder(folder: string): Promise<string> {
-        // result relative to base folder
-        folder =
-          folder.charAt(0) === "/"
-            ? path.join(baseFolder, folder)
-            : path.join(baseFolder, currentFolder, folder)
-        return new Promise((resolve) => {
-          if (folder.startsWith(baseFolder)) {
-            resolve("/" + path.relative(baseFolder, folder))
-          }
-          resolve("/") // no jailbreak!
-        })
-      }
-
-      function resolveFile(file: string): Promise<string> {
-        // result relative to current folder
-        file =
-          file.charAt(0) === "/"
-            ? path.join(baseFolder, file)
-            : path.join(baseFolder, currentFolder, file)
-        file = translateFilename?.(file) ?? file
-        return new Promise((resolve, reject) => {
-          if (file.startsWith(baseFolder)) {
-            file = path.relative(path.join(baseFolder, currentFolder), file)
-            resolve(file)
-          }
-          reject() // no jailbreak!
-        })
-      }
-
-      function folderExists(folder: string): Promise<boolean> {
-        // advance status check is inconclusive, check error condition later
-        return fs.stat(path.join(baseFolder, folder)).then((fstat) => {
-          if (fstat.isDirectory()) {
+    function fileExists(file: string): Promise<boolean> {
+      // input checked relative to current folder
+      // advance status check is inconclusive, check error condition later
+      return fs
+        .stat(path.join(baseFolder, currentFolder, file))
+        .then((fstat) => {
+          if (fstat.isFile()) {
             return true
           }
 
-          throw Object.assign(new Error("not directory"), {
-            code: Errors.ENOTDIR,
+          throw Object.assign(new Error("not file"), {
+            code: Errors.ENOTFILE,
           })
         })
-      }
+    }
 
-      function fileExists(file: string): Promise<boolean> {
-        // input checked relative to current folder
-        // advance status check is inconclusive, check error condition later
-        return fs
-          .stat(path.join(baseFolder, currentFolder, file))
-          .then((fstat) => {
-            if (fstat.isFile()) {
-              return true
-            }
+    return {
+      setFolder(folder: string): Promise<string> {
+        return resolveFolder(folder).then((folder) =>
+          folderExists(folder).then(() => (currentFolder = folder))
+        )
+      },
 
-            throw Object.assign(new Error("not file"), {
-              code: Errors.ENOTFILE,
+      getFolder(): string {
+        return currentFolder
+      },
+
+      folderDelete(folder: string): Promise<void> {
+        // should not allow removing any path containing currentFolder?
+        // try to remove without checking existence, let it raise error?
+        return resolveFolder(folder)
+          .then((folder) => folderExists(folder))
+          .then(() =>
+            fs.rm(path.join(baseFolder, folder), {
+              force: true,
+              recursive: true,
             })
-          })
-      }
-
-      return {
-        setFolder(folder: string): Promise<string> {
-          return resolveFolder(folder).then((folder) =>
-            folderExists(folder).then(() => (currentFolder = folder))
           )
-        },
+      },
 
-        getFolder(): string {
-          return currentFolder
-        },
-
-        folderDelete(folder: string): Promise<void> {
-          // should not allow removing any path containing currentFolder?
-          // try to remove without checking existence, let it raise error?
-          return resolveFolder(folder)
-            .then((folder) => folderExists(folder))
-            .then(() =>
-              fs.rm(path.join(baseFolder, folder), {
-                force: true,
-                recursive: true,
+      folderCreate(folder: string): Promise<void> {
+        return resolveFolder(folder).then((folder) =>
+          // try to create without checking, let it raise error?
+          folderExists(folder).then(
+            () => {
+              throw Object.assign(Error(path.join(baseFolder, folder)), {
+                code: Errors.EEXIST,
               })
-            )
-        },
-
-        folderCreate(folder: string): Promise<void> {
-          return resolveFolder(folder).then((folder) =>
-            // try to create without checking, let it raise error?
-            folderExists(folder).then(
-              () => {
-                throw Object.assign(Error(path.join(baseFolder, folder)), {
-                  code: Errors.EEXIST,
+            },
+            () =>
+              fs
+                .mkdir(path.join(baseFolder, folder), {
+                  recursive: true,
                 })
-              },
-              () =>
-                fs
-                  .mkdir(path.join(baseFolder, folder), {
-                    recursive: true,
-                  })
-                  .then((folder) => {
-                    if (!folder) {
+                .then((folder) => {
+                  if (!folder) {
+                    throw Object.assign(Error(path.join(baseFolder, folder)), {
+                      code: Errors.EEXIST,
+                    })
+                  }
+                })
+          )
+        )
+      },
+
+      folderList(folder: string): Promise<Stats[]> {
+        return resolveFolder(folder).then((folder) =>
+          fs
+            .readdir(path.join(baseFolder, folder), {
+              withFileTypes: true,
+            })
+            .then((dirents) =>
+              Promise.all(
+                dirents
+                  .filter((dirent) => dirent.isDirectory() || dirent.isFile())
+                  .map(({ name }) =>
+                    fs
+                      .stat(path.join(baseFolder, folder, name))
+                      .then((fstat) => Object.assign(fstat, { name }))
+                  )
+              )
+            )
+        )
+      },
+
+      fileSize(file: string): Promise<number> {
+        return resolveFile(file).then((file) =>
+          fs
+            .stat(path.join(baseFolder, currentFolder, file))
+            .then((fstat) => fstat.size)
+        )
+      },
+
+      fileSetTimes(file: string, mtime: number): Promise<void> {
+        return resolveFile(file).then((file) =>
+          fs.utimes(path.join(baseFolder, currentFolder, file), mtime, mtime)
+        )
+      },
+
+      fileRename(fromFile: string) {
+        return resolveFile(fromFile).then((file) =>
+          fileExists(file).then(async () => {
+            const fromFile = await resolveFolder(file) // filename relative to base folder
+            return Object.assign(
+              function fileRenameTo(toFile: string) {
+                return resolveFile(toFile).then((toFile) =>
+                  // TODO: try to rename without checking, let it raise error
+                  fileExists(toFile).then(
+                    () => {
+                      // what if allowed to replace?
                       throw Object.assign(
-                        Error(path.join(baseFolder, folder)),
+                        Error(path.join(baseFolder, currentFolder, toFile)),
                         {
                           code: Errors.EEXIST,
                         }
                       )
-                    }
-                  })
-            )
-          )
-        },
-
-        folderList(folder: string): Promise<Stats[]> {
-          return resolveFolder(folder).then((folder) =>
-            fs
-              .readdir(path.join(baseFolder, folder), {
-                withFileTypes: true,
-              })
-              .then((dirents) =>
-                Promise.all(
-                  dirents
-                    .filter((dirent) => dirent.isDirectory() || dirent.isFile())
-                    .map(({ name }) =>
-                      fs
-                        .stat(path.join(baseFolder, folder, name))
-                        .then((fstat) => Object.assign(fstat, { name }))
-                    )
-                )
-              )
-          )
-        },
-
-        fileSize(file: string): Promise<number> {
-          return resolveFile(file).then((file) =>
-            fs
-              .stat(path.join(baseFolder, currentFolder, file))
-              .then((fstat) => fstat.size)
-          )
-        },
-
-        fileSetTimes(file: string, mtime: number): Promise<void> {
-          return resolveFile(file).then((file) =>
-            fs.utimes(path.join(baseFolder, currentFolder, file), mtime, mtime)
-          )
-        },
-
-        fileRename(fromFile: string) {
-          return resolveFile(fromFile).then((file) =>
-            fileExists(file).then(async () => {
-              const fromFile = await resolveFolder(file) // filename relative to base folder
-              return Object.assign(
-                function fileRenameTo(toFile: string) {
-                  return resolveFile(toFile).then((toFile) =>
-                    // TODO: try to rename without checking, let it raise error
-                    fileExists(toFile).then(
-                      () => {
-                        // what if allowed to replace?
-                        throw Object.assign(
-                          Error(path.join(baseFolder, currentFolder, toFile)),
-                          {
-                            code: Errors.EEXIST,
-                          }
-                        )
-                      },
-                      () =>
-                        fs.rename(
-                          path.join(baseFolder, fromFile), // NOTE:  fromFile is relative to baseFolder, not currentFolder
-                          path.join(baseFolder, currentFolder, toFile)
-                        )
-                    )
+                    },
+                    () =>
+                      fs.rename(
+                        path.join(baseFolder, fromFile), // NOTE:  fromFile is relative to baseFolder, not currentFolder
+                        path.join(baseFolder, currentFolder, toFile)
+                      )
                   )
-                },
-                { fromFile }
-              )
+                )
+              },
+              { fromFile }
+            )
+          })
+        )
+      },
+
+      fileDelete(file: string): Promise<void> {
+        return resolveFile(file).then((file) =>
+          fs.unlink(path.join(baseFolder, currentFolder, file))
+        )
+      },
+
+      fileStore(file: string, allowReplace: boolean, seek = 0) {
+        const mode = (() => {
+          if (seek) {
+            if (!allowReplace) {
+              return "wx+"
+            }
+            return "w+"
+          } else if (!allowReplace) {
+            return "wx"
+          }
+          return "w"
+        })()
+        return resolveFile(file).then((file) =>
+          fs.open(path.join(baseFolder, currentFolder, file), mode).then((fd) =>
+            fd.createWriteStream({
+              start: seek,
+              autoClose: true,
+              emitClose: true,
             })
           )
-        },
+        )
+      },
 
-        fileDelete(file: string): Promise<void> {
-          return resolveFile(file).then((file) =>
-            fs.unlink(path.join(baseFolder, currentFolder, file))
+      fileRetrieve(file: string, seek?: number): Promise<Readable> {
+        return resolveFile(file).then((file) =>
+          fs.open(path.join(baseFolder, currentFolder, file), "r").then((fd) =>
+            fd.createReadStream({
+              start: seek,
+              autoClose: true,
+              emitClose: true,
+              // Use highWaterMark that might hold the whole file in process memory
+              // -mitigate chance of corruption due to overwriting file on disk between chunked reads
+              // -actual memory consumption determined by file size and difference of read and write speeds
+              highWaterMark:
+                parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
+            })
           )
-        },
-
-        fileStore(file: string, allowReplace: boolean, seek = 0) {
-          const mode = (() => {
-            if (seek) {
-              if (!allowReplace) {
-                return "wx+"
-              }
-              return "w+"
-            } else if (!allowReplace) {
-              return "wx"
-            }
-            return "w"
-          })()
-          return resolveFile(file).then((file) =>
-            fs
-              .open(path.join(baseFolder, currentFolder, file), mode)
-              .then((fd) =>
-                fd.createWriteStream({
-                  start: seek,
-                  autoClose: true,
-                  emitClose: true,
-                })
-              )
-          )
-        },
-
-        fileRetrieve(file: string, seek?: number): Promise<Readable> {
-          return resolveFile(file).then((file) =>
-            fs
-              .open(path.join(baseFolder, currentFolder, file), "r")
-              .then((fd) =>
-                fd.createReadStream({
-                  start: seek,
-                  autoClose: true,
-                  emitClose: true,
-                  // Use highWaterMark that might hold the whole file in process memory
-                  // -mitigate chance of corruption due to overwriting file on disk between chunked reads
-                  // -actual memory consumption determined by file size and difference of read and write speeds
-                  highWaterMark:
-                    parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
-                })
-              )
-          )
-        },
-      }
+        )
+      },
     }
-  },
-  {
-    getBaseFolder: () => defaultBaseFolder,
-    cleanup: () => {
-      cleanup?.()
-    },
   }
-)
+}
+
+// export accessor and cleanup util
+export function getBaseFolder() {
+  return defaultBaseFolder
+}
+
+export function cleanup() {
+  cleanupBaseFolder?.()
+}

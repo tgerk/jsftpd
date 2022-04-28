@@ -40,6 +40,8 @@ import internalAuth, {
 } from "./auth"
 
 import localStore, {
+  getBaseFolder as getLocalStoreBaseFolder,
+  cleanup as cleanupLocalStore,
   StoreFactory,
   Store,
   Stats,
@@ -171,7 +173,7 @@ export async function createFtpServer({
         emitter.emit("listen", {
           protocol,
           ...address,
-          basefolder: localStore.getBaseFolder(),
+          basefolder: getLocalStoreBaseFolder(),
         })
       }
     },
@@ -186,7 +188,7 @@ export async function createFtpServer({
     },
 
     cleanup() {
-      localStore.cleanup()
+      cleanupLocalStore()
     },
 
     reloadAuth(options: AuthOptions) {

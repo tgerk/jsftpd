@@ -238,3 +238,58 @@ test("login with user settings and wrong password rejected", async () => {
 
   await cmdSocket.end()
 })
+
+test("login with active reload user settings", async () => {
+  const users = [
+    {
+      username: "john",
+      password: "doe",
+    },
+  ]
+  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server.start()
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "331 Password required for john"
+  )
+
+  expect(await cmdSocket.command("PASS doe").response()).toBe("230 Logged on")
+
+  const cmdSocket2 = new ExpectSocket()
+  expect(await cmdSocket2.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket2.command("USER michael").response()).toBe(
+    "530 Not logged in"
+  )
+  
+  users.push(
+    {
+      username: "michael",
+      password: "myers",
+    })
+  server.reloadAuth({ user: users })
+
+  const cmdSocket3 = new ExpectSocket()
+  expect(await cmdSocket3.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket3.command("USER michael").response()).toBe(
+    "331 Password required for michael"
+  )
+
+  expect(await cmdSocket3.command("PASS myers").response()).toBe(
+    "230 Logged on"
+  )
+
+  await cmdSocket3.end()
+  await cmdSocket2.end()
+  await cmdSocket.end()
+})

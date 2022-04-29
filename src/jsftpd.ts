@@ -624,6 +624,7 @@ export async function createFtpServer({
                 )
               },
               (error) => {
+                socket.end()
                 SessionErrorHandler(format)(error)
                 client.respond("501", `Command failed`)
               }
@@ -685,6 +686,7 @@ export async function createFtpServer({
       RETR: function (cmd: string, file: string) {
         if (!permissions.allowFileRetrieve) {
           client.respond("550", `Transfer failed "${file}"`)
+          // TODO: if client has connected to passive port?
         } else {
           openDataSocket().then(
             (writeSocket: Writable) =>
@@ -750,6 +752,7 @@ export async function createFtpServer({
       STOR: function (cmd: string, file: string) {
         if (!permissions.allowFileOverwrite && !permissions.allowFileCreate) {
           client.respond("550", `Transfer failed "${file}"`)
+          // TODO: if client has connected to passive port?
         } else {
           // but what if allowFileOverwrite, but not allowFileCreate?
           openDataSocket().then(

@@ -70,6 +70,8 @@ interface FTPCommandTable {
   [fn: string]: (cmd: string, arg: string) => void
 }
 
+type IncomingConnectionSource = Server & { connectionQueue: Promise<Socket>[] }
+
 export async function createFtpServer({
   tls: tlsOptions,
   auth,
@@ -255,7 +257,7 @@ export async function createFtpServer({
       fileRename: Store["fileRename"],
       fileSetTimes: Store["fileSetTimes"]
 
-    let dataPort: Server | TcpSocketConnectOpts,
+    let dataPort: IncomingConnectionSource | TcpSocketConnectOpts,
       renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
 
     emitDebugMessage(`established FTP connection`)
@@ -548,6 +550,7 @@ export async function createFtpServer({
           }
         )
       },
+
       /*
        *  RMD
        *  RMDA
@@ -931,10 +934,25 @@ export async function createFtpServer({
         dataPort.close()
       }
 
-      dataPort =
+      dataPort = Object.assign(
         "encrypted" in client && protectedMode
           ? createSecureServer(tlsOptions)
-          : createServer()
+          : createServer(),
+        {
+          connectionQueue: [],
+        }
+      )
+
+      let resolveNext: (value: Socket | PromiseLike<Socket>) => void
+      function resolveConnection(socket?: Socket) {
+        resolveNext?.(socket)
+        ;(dataPort as IncomingConnectionSource).connectionQueue.push(
+          new Promise<Socket>((resolve) => {
+            resolveNext = resolve
+          })
+        )
+      }
+
       dataPort.maxConnections = 1
 
       dataPort.on("error", SessionErrorHandler("passive data port"))
@@ -945,6 +963,21 @@ export async function createFtpServer({
           })
         })
       }
+
+      resolveConnection() // initialize
+      dataPort.on(
+        "addContext" in dataPort ? "secureConnection" : "connection",
+        (socket: Socket) => {
+          emitDebugMessage(`data connection established`)
+          socket.on("error", SessionErrorHandler("passive data connection"))
+          socket.on("close", () => {
+            emitDebugMessage(`data connection has closed`)
+          })
+
+          // to avoid race condition, need to handle connections as they come (not wait for client command to arrive)
+          resolveConnection(socket)
+        }
+      )
 
       return findAvailablePort().then(
         (port) =>
@@ -1005,23 +1038,11 @@ export async function createFtpServer({
     function openDataSocket() {
       if (dataPort instanceof Server) {
         client.respond("150", "Awaiting passive connection")
-        return new Promise((resolve, reject) => {
-          // TODO: reject if port is not accepting connections
-          // TODO: reject if no connection within a reasonable time
 
-          ;(dataPort as Server).once(
-            "addContext" in dataPort ? "secureConnection" : "connection",
-            (socket) => {
-              emitDebugMessage(`data connection established`)
-              socket.on("error", SessionErrorHandler("passive data connection"))
-              socket.on("close", () => {
-                emitDebugMessage(`data connection has closed`)
-              })
+        // TODO: reject if port is not accepting connections
+        // TODO: reject if no connection within a reasonable time
 
-              resolve(socket)
-            }
-          )
-        })
+        return dataPort.connectionQueue.shift()
       }
 
       if (dataPort instanceof Object) {
@@ -1128,12 +1149,12 @@ export async function createFtpServer({
     }
 
     function CmdHandler(buf: Buffer) {
-      try {
-        const data = buf.toString(),
-          [cmd, ...args] = data.trim().split(/\s+/),
-          arg = args.join(" ")
-        emitLogMessage(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : arg}]`)
+      const data = buf.toString(),
+        [cmd, ...args] = data.trim().split(/\s+/),
+        arg = args.join(" ")
+      emitLogMessage(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : arg}]`)
 
+      try {
         if (authenticated) {
           if (cmd in authenticatedMethods) {
             authenticatedMethods[cmd as keyof FTPCommandTable](cmd, arg)
@@ -1147,7 +1168,9 @@ export async function createFtpServer({
           client.end()
         }
       } catch (err) {
-        SessionErrorHandler(`exception on command [${buf}]`)(err)
+        SessionErrorHandler(
+          `exception on command [${[cmd, ...args].join(" ")}]`
+        )(err)
         client.respond("550", "Unexpected server error")
         client.end()
       }

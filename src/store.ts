@@ -7,7 +7,7 @@ import { Readable, Writable } from "stream"
 
 import { Credential } from "./auth"
 
-export type Stats = FsStats & { name: string }
+export type Stats = Partial<FsStats> & { name: string }
 
 export enum Errors {
   EEXIST = "EEXIST",
@@ -17,8 +17,8 @@ export enum Errors {
 }
 
 // FTP protocol assumes storage has a tree structure
-//  PWD / CWD indicate a state of traversing the tree
-//  file and folder manipulating commands implicitly refer to PWD state
+//  PWD / CWD indicate a state of traversing the tree, i.e. "context"
+//  file and folder manipulating commands require context
 export interface Store {
   // control PWD state,implicit in other accessors/operations
   getFolder(): string
@@ -32,16 +32,16 @@ export interface Store {
   // operations on files/objects/leaves, arg is relative to PWD
   fileDelete(file: string): Promise<void>
   fileSize(file: string): Promise<number>
+  fileRetrieve(file: string, seek?: number): Promise<Readable>
   fileSetTimes(file: string, mtime: number): Promise<void>
-  fileRename(
-    fromFile: string
-  ): Promise<((toFile: string) => Promise<void>) & { fromFile: string }>
   fileStore(
     file: string,
     allowReplace: boolean,
     seek?: number
   ): Promise<Writable>
-  fileRetrieve(file: string, seek?: number): Promise<Readable>
+  fileRename(
+    fromFile: string
+  ): Promise<((toFile: string) => Promise<void>) & { fromFile: string }>
 }
 
 export type StoreOptions = {

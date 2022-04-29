@@ -303,7 +303,7 @@ test("test STOR message overwrite not allowed", async () => {
   await dataSocket.connectSync(dataPort, localhost)
   expect(await cmdSocket.response()).toBe("550 File already exists")
 
-  await sleep(1)
+  await sleep(100)
   expect(dataSocket.stream.destroyed).toBe(true)
 
   await cmdSocket.end()

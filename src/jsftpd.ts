@@ -608,24 +608,21 @@ export async function createFtpServer({
       LIST: function (format: string, folder: string) {
         openDataSocket().then(
           (socket: Writable) =>
-            folderList(folder)
-              .then((stats) => stats.map(formatListing(format)))
-              .then(
-                (listing) => {
-                  emitDebugMessage(
-                    `LIST response on data channel\r\n${listing.join("\r\n")}`
-                  )
-                  socket.end(listing.join("\r\n") + "\r\n")
-                  client.respond(
-                    "226",
-                    `Successfully transferred "${getFolder()}"`
-                  )
-                },
-                (error) => {
-                  SessionErrorHandler(format)(error)
-                  client.respond("501", `Command failed`)
-                }
-              ),
+            folderList(folder).then(
+              (stats) => {
+                const listing = stats.map(formatListing(format)).join("\r\n")
+                emitDebugMessage(`LIST response on data channel\r\n${listing || "(empty)"}`)
+                socket.end(listing + "\r\n")
+                client.respond(
+                  "226",
+                  `Successfully transferred "${getFolder()}"`
+                )
+              },
+              (error) => {
+                SessionErrorHandler(format)(error)
+                client.respond("501", `Command failed`)
+              }
+            ),
           (error: NodeJS.ErrnoException) => {
             SessionErrorHandler(format)(error)
             client.respond("501", "Command failed")

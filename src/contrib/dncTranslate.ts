@@ -1,8 +1,8 @@
 /**
  * this module provided as an example of decorating backend storage handler methods
  *  use one hook and override one interface method of base factory
- * 
- * TODO: make behavior contingent on user's credential or remote client 
+ *
+ * TODO: make behavior contingent on user's credential or remote client
  */
 
 import path from "path"

@@ -611,7 +611,9 @@ export async function createFtpServer({
             folderList(folder).then(
               (stats) => {
                 const listing = stats.map(formatListing(format)).join("\r\n")
-                emitDebugMessage(`LIST response on data channel\r\n${listing || "(empty)"}`)
+                emitDebugMessage(
+                  `LIST response on data channel\r\n${listing || "(empty)"}`
+                )
                 socket.end(listing + "\r\n")
                 client.respond(
                   "226",

@@ -268,12 +268,11 @@ test("login with active reload user settings", async () => {
   expect(await cmdSocket2.command("USER michael").response()).toBe(
     "530 Not logged in"
   )
-  
-  users.push(
-    {
-      username: "michael",
-      password: "myers",
-    })
+
+  users.push({
+    username: "michael",
+    password: "myers",
+  })
   server.reloadAuth({ user: users })
 
   const cmdSocket3 = new ExpectSocket()

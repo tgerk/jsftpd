@@ -290,9 +290,10 @@ test("test RETR message with handler", async () => {
     "SOMETESTCONTENT"
   )
 
-  const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
-  expect(response).toMatch('226 Successfully transferred "mytestfile"')
+  expect(await cmdSocket.response()).toMatch("150 Awaiting passive connection")
+  expect(await cmdSocket.response()).toMatch(
+    '226 Successfully transferred "mytestfile"'
+  )
 
   expect(fileStore).toBeCalledTimes(1)
   expect(fileRetrieve).toBeCalledTimes(1)

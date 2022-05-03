@@ -686,7 +686,7 @@ export async function createFtpServer({
       RETR: function (cmd: string, file: string) {
         if (!permissions.allowFileRetrieve) {
           client.respond("550", `Transfer failed "${file}"`)
-          // TODO: if client has connected to passive port?
+          // Could client connecton be waiting on passive port?
         } else {
           openDataSocket().then(
             (writeSocket: Writable) =>
@@ -694,28 +694,33 @@ export async function createFtpServer({
                 .then(
                   (readStream) => {
                     readStream.on("error", (error: NodeJS.ErrnoException) => {
-                      // error on read
                       writeSocket.destroy()
                       SessionErrorHandler(cmd)(error)
+                      if (error.code === StoreErrors.ENOENT) {
+                        client.respond("550", "File not found")
+                        return
+                      }
+
                       client.respond("550", `Transfer failed "${file}"`)
                     })
-                    writeSocket.on("error", () => {
-                      // error on transmit
-                      readStream.destroy()
-                      client.respond(
-                        "426",
-                        `Connection closed. Aborted transfer of "${file}"`
-                      )
-                    })
-                    readStream.on("close", () => {
-                      // end of file
-                      writeSocket.end()
-                      emitDownloadEvent(file)
-                      client.respond(
-                        "226",
-                        `Successfully transferred "${file}"`
-                      )
-                    })
+
+                    writeSocket
+                      .on("error", (error) => {
+                        readStream.destroy()
+                        SessionErrorHandler(cmd)(error)
+                        client.respond(
+                          "426",
+                          `Connection closed. Aborted transfer of "${file}"`
+                        )
+                      })
+                      .on("end", () => {
+                        emitDownloadEvent(file)
+                        client.respond(
+                          "226",
+                          `Successfully transferred "${file}"`
+                        )
+                      })
+
                     readStream
                       // .pipe(tee(emitDebugMessage)) // log outbound stream
                       .pipe(
@@ -726,11 +731,6 @@ export async function createFtpServer({
                   },
                   (error) => {
                     writeSocket.destroy()
-                    if (error.code === StoreErrors.ENOENT) {
-                      client.respond("550", "File not found")
-                      return
-                    }
-
                     SessionErrorHandler(cmd)(error)
                     client.respond("501", "Command failed")
                   }
@@ -752,7 +752,7 @@ export async function createFtpServer({
       STOR: function (cmd: string, file: string) {
         if (!permissions.allowFileOverwrite && !permissions.allowFileCreate) {
           client.respond("550", `Transfer failed "${file}"`)
-          // TODO: if client has connected to passive port?
+          // Could client connecton be waiting on passive port?
         } else {
           // but what if allowFileOverwrite, but not allowFileCreate?
           openDataSocket().then(
@@ -760,26 +760,34 @@ export async function createFtpServer({
               fileStore(file, permissions.allowFileOverwrite, dataOffset)
                 .then(
                   (writeStream) => {
-                    readSocket.on("error", (error) => {
-                      // error on receive
+                    readSocket.on("error", (error: NodeJS.ErrnoException) => {
                       writeStream.destroy()
-                      client.respond("550", `Transfer failed "${file}"`)
-                    })
-                    writeStream.on("error", (error: NodeJS.ErrnoException) => {
-                      // error on write
-                      readSocket.destroy()
                       SessionErrorHandler(cmd)(error)
-                      client.respond("550", `Transfer failed "${file}"`)
-                    })
-                    readSocket.on("end", () => {
-                      // end of file
-                      writeStream.end()
-                      emitUploadEvent(file)
                       client.respond(
-                        "226",
-                        `Successfully transferred "${file}"`
+                        "426",
+                        `Connection closed. Aborted transfer of "${file}"`
                       )
                     })
+
+                    writeStream
+                      .on("error", (error: NodeJS.ErrnoException) => {
+                        readSocket.destroy()
+                        SessionErrorHandler(cmd)(error)
+                        if (error.code === StoreErrors.EEXIST) {
+                          client.respond("550", "File already exists")
+                          return
+                        }
+
+                        client.respond("550", `Transfer failed "${file}"`)
+                      })
+                      .on("finish", (error: NodeJS.ErrnoException) => {
+                        emitUploadEvent(file)
+                        client.respond(
+                          "226",
+                          `Successfully transferred "${file}"`
+                        )
+                      })
+
                     readSocket
                       // .pipe(tee(emitDebugMessage)) // log inbound stream
                       .pipe(
@@ -790,11 +798,6 @@ export async function createFtpServer({
                   },
                   (error) => {
                     readSocket.destroy()
-                    if (error.code === StoreErrors.EEXIST) {
-                      client.respond("550", "File already exists")
-                      return
-                    }
-
                     SessionErrorHandler(cmd)(error)
                     client.respond("501", `Transfer failed "${file}"`)
                   }

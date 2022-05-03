@@ -160,7 +160,7 @@ export async function createFtpServer({
           function ServerErrorHandler(err: NodeJS.ErrnoException) {
             emitter.emit(
               "error",
-              `server error ${getDateForLogs()} ${util.inspect(err, {
+              `server error ${formatDateIso()} ${util.inspect(err, {
                 showHidden: false,
                 depth: null,
                 breakLength: Infinity,
@@ -250,7 +250,7 @@ export async function createFtpServer({
       folderDelete: Store["folderDelete"],
       folderCreate: Store["folderCreate"],
       folderList: Store["folderList"],
-      fileSize: Store["fileSize"],
+      fileStats: Store["fileStats"],
       fileDelete: Store["fileDelete"],
       fileRetrieve: Store["fileRetrieve"],
       fileStore: Store["fileStore"],
@@ -637,26 +637,6 @@ export async function createFtpServer({
       },
 
       /*
-       *  SIZE
-       */
-      SIZE: function (cmd: string, file: string) {
-        fileSize(file).then(
-          (size) => {
-            client.respond("213", size.toString())
-          },
-          (error) => {
-            if (error.code === StoreErrors.ENOENT) {
-              client.respond("550", "File not found")
-              return
-            }
-
-            SessionErrorHandler(cmd)(error)
-            client.respond("501", "Command failed")
-          }
-        )
-      },
-
-      /*
        *  DELE
        */
       DELE: function (cmd: string, file: string) {
@@ -678,6 +658,36 @@ export async function createFtpServer({
             }
           )
         }
+      },
+
+      /*
+       *  SIZE
+       */
+      SIZE: function (cmd: string, file: string) {
+        fileStats(file).then(
+          (fstat) => {
+            switch (cmd) {
+              case "SIZE":
+                client.respond("213", fstat.size.toString())
+                return
+              case "MDTM":
+                client.respond(
+                  "213",
+                  formatDate_YYYYMMDDHHmmss_sss(fstat.mtime)
+                )
+                return
+            }
+          },
+          (error) => {
+            if (error.code === StoreErrors.ENOENT) {
+              client.respond("550", "File not found")
+              return
+            }
+
+            SessionErrorHandler(cmd)(error)
+            client.respond("501", "Command failed")
+          }
+        )
       },
 
       /*
@@ -868,7 +878,7 @@ export async function createFtpServer({
        */
       MFMT: function (cmd: string, arg: string) {
         const [time, ...rest] = arg.split(/\s+/),
-          mtime = getDateForMFMT(time)
+          mtime = parseDate_YYYYMMDDHHmm(time)
         fileSetTimes(rest.join(" "), mtime).then(
           () => {
             client.respond("253", "Date/time changed okay")
@@ -887,9 +897,9 @@ export async function createFtpServer({
     }
 
     authenticatedMethods.RMDA = authenticatedMethods.RMD
-    authenticatedMethods.MLSD = authenticatedMethods.LIST
-    authenticatedMethods.NLST = authenticatedMethods.LIST
-    authenticatedMethods.MDTM = authenticatedMethods.MFMT
+    authenticatedMethods.MLSD = authenticatedMethods.NLST =
+      authenticatedMethods.LIST
+    authenticatedMethods.MDTM = authenticatedMethods.SIZE
 
     function resetSession() {
       if (dataPort instanceof Server) {
@@ -924,7 +934,7 @@ export async function createFtpServer({
         folderCreate,
         folderList,
 
-        fileSize,
+        fileStats,
         fileDelete,
         fileRetrieve,
         fileStore,
@@ -1090,11 +1100,11 @@ export async function createFtpServer({
     }
 
     function emitLogMessage(msg: string | { toString: () => string }) {
-      emitter.emit("log", `${getDateForLogs()} ${clientInfo} ${msg}`)
+      emitter.emit("log", `${formatDateIso()} ${clientInfo} ${msg}`)
     }
 
     function emitDebugMessage(msg: string | { toString: () => string }) {
-      emitter.emit("debug", `${getDateForLogs()} ${clientInfo} ${msg}`)
+      emitter.emit("debug", `${formatDateIso()} ${clientInfo} ${msg}`)
     }
 
     function emitLoginEvent() {
@@ -1142,7 +1152,7 @@ export async function createFtpServer({
       return function (error: NodeJS.ErrnoException) {
         emitter.emit(
           "warn", // don't say "error" -- Jest somehow detects "error" events that don't have a handler
-          `${socketType} error ${clientInfo} ${getDateForLogs()} ${util.inspect(
+          `${socketType} error ${clientInfo} ${formatDateIso()} ${util.inspect(
             error,
             {
               showHidden: false,
@@ -1195,7 +1205,7 @@ function formatListing(format = "LIST") {
         util.format(
           "type=%s;modify=%s;%s %s",
           fstat.isDirectory() ? "dir" : "file",
-          getDateForMLSD(fstat.mtime),
+          formatDate_YYYYMMDDHHmmss_sss(fstat.mtime),
           fstat.isDirectory() ? "" : "size=" + fstat.size.toString() + ";",
           fstat.name
         )
@@ -1206,46 +1216,46 @@ function formatListing(format = "LIST") {
           "%s 1 ? ? %s %s %s", // showing link-count = 1, don't expose uid, gid
           fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--",
           String(fstat.isDirectory() ? "0" : fstat.size).padStart(14, " "),
-          getDateForLIST(fstat.mtime),
+          formatDate_Mmm_DD_HH_mm(fstat.mtime),
           fstat.name
         )
   }
 }
 
-function getDateForLIST(mtime: Date): string {
-  const now = new Date(mtime)
-  const MM = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ][now.getMonth()]
-  const DD = now.getDate().toString().padStart(2, "0")
-  const H = now.getHours().toString().padStart(2, "0")
-  const M = now.getMinutes().toString().padStart(2, "0")
+function formatDate_Mmm_DD_HH_mm(mtime: Date): string {
+  const now = new Date(mtime),
+    MM = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ][now.getMonth()],
+    DD = now.getDate().toString().padStart(2, "0"),
+    H = now.getHours().toString().padStart(2, "0"),
+    M = now.getMinutes().toString().padStart(2, "0")
   return `${MM} ${DD} ${H}:${M}`
 }
 
-function getDateForMLSD(mtime: Date): string {
-  const now = new Date(mtime)
-  const MM = (now.getMonth() + 1).toString().padStart(2, "0")
-  const DD = now.getDate().toString().padStart(2, "0")
-  const H = now.getHours().toString().padStart(2, "0")
-  const M = now.getMinutes().toString().padStart(2, "0")
-  const S = now.getSeconds().toString().padStart(2, "0")
-  return `${now.getFullYear()}${MM}${DD}${H}${M}${S}`
+function formatDate_YYYYMMDDHHmmss_sss(mtime: Date): string {
+  const now = new Date(mtime),
+    MM = (now.getMonth() + 1).toString().padStart(2, "0"),
+    DD = now.getDate().toString().padStart(2, "0"),
+    H = now.getHours().toString().padStart(2, "0"),
+    M = now.getMinutes().toString().padStart(2, "0"),
+    S = now.getSeconds().toString().padStart(2, "0"),
+    s = now.getMilliseconds().toString().padStart(3, "0")
+  return `${now.getFullYear()}${MM}${DD}${H}${M}${S}.${s}`
 }
 
-function getDateForMFMT(time: string): number {
-  // expect format YYYYMMDDhhmmss
+function parseDate_YYYYMMDDHHmm(time: string): number {
   const Y = time.substring(0, 4),
     M = time.substring(4, 6),
     D = time.substring(6, 8),
@@ -1255,7 +1265,7 @@ function getDateForMFMT(time: string): number {
   return Date.parse(`${Y}-${M}-${D}T${Hrs}:${Min}:${Sec}+00:00`) / 1000
 }
 
-function getDateForLogs(date?: Date): string {
+function formatDateIso(date?: Date): string {
   date = date || new Date()
   return date.toISOString()
 }

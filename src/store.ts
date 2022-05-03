@@ -38,9 +38,8 @@ export interface Store {
 
   // operations on files/objects/leaves, arg is relative to PWD
   fileDelete(file: string): Promise<void>
-  fileSize(file: string): Promise<number>
+  fileStats(file: string): Promise<Stats>
   fileRetrieve(file: string, seek?: number): Promise<Readable>
-  fileSetTimes(file: string, mtime: number): Promise<void>
   fileStore(
     file: string,
     allowReplace: boolean,
@@ -49,6 +48,7 @@ export interface Store {
   fileRename(
     fromFile: string
   ): Promise<((toFile: string) => Promise<void>) & { fromFile: string }>
+  fileSetTimes(file: string, mtime: number): Promise<void>
 }
 
 export type StoreOptions = {
@@ -223,14 +223,51 @@ export default function (baseFolder: string) {
         )
       },
 
-      fileSize(file: string): Promise<number> {
+      fileDelete(file: string): Promise<void> {
+        return resolveFile(file).then((file) => fs.unlink(file))
+      },
+
+      fileStats(file: string): Promise<Stats> {
+        return resolveFile(file)
+          .then((file) => fs.stat(file))
+          .then((fstat) => Object.assign(fstat, { name: file }))
+      },
+
+      fileRetrieve(file: string, seek?: number): Promise<Readable> {
         return resolveFile(file).then((file) =>
-          fs.stat(file).then((fstat) => fstat.size)
+          createReadStream(file, {
+            start: seek,
+            autoClose: true,
+            emitClose: true,
+            // Use highWaterMark that might hold the whole file in process memory
+            // -mitigate chance of corruption due to overwriting file on disk between chunked reads
+            // -actual memory consumption determined by file size and difference of read and write speeds
+            highWaterMark:
+              parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
+          })
         )
       },
 
-      fileSetTimes(file: string, mtime: number): Promise<void> {
-        return resolveFile(file).then((file) => fs.utimes(file, mtime, mtime))
+      fileStore(file: string, allowReplace: boolean, seek = 0) {
+        const flags = (() => {
+          if (seek) {
+            if (!allowReplace) {
+              return "wx+"
+            }
+            return "w+"
+          } else if (!allowReplace) {
+            return "wx"
+          }
+          return "w"
+        })()
+        return resolveFile(file).then((file) =>
+          createWriteStream(file, {
+            flags,
+            start: seek,
+            autoClose: true,
+            emitClose: true,
+          })
+        )
       },
 
       fileRename(fromFile: string) {
@@ -257,45 +294,8 @@ export default function (baseFolder: string) {
         )
       },
 
-      fileDelete(file: string): Promise<void> {
-        return resolveFile(file).then((file) => fs.unlink(file))
-      },
-
-      fileStore(file: string, allowReplace: boolean, seek = 0) {
-        const flags = (() => {
-          if (seek) {
-            if (!allowReplace) {
-              return "wx+"
-            }
-            return "w+"
-          } else if (!allowReplace) {
-            return "wx"
-          }
-          return "w"
-        })()
-        return resolveFile(file).then((file) =>
-          createWriteStream(file, {
-            flags,
-            start: seek,
-            autoClose: true,
-            emitClose: true,
-          })
-        )
-      },
-
-      fileRetrieve(file: string, seek?: number): Promise<Readable> {
-        return resolveFile(file).then((file) =>
-          createReadStream(file, {
-            start: seek,
-            autoClose: true,
-            emitClose: true,
-            // Use highWaterMark that might hold the whole file in process memory
-            // -mitigate chance of corruption due to overwriting file on disk between chunked reads
-            // -actual memory consumption determined by file size and difference of read and write speeds
-            highWaterMark:
-              parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
-          })
-        )
+      fileSetTimes(file: string, mtime: number): Promise<void> {
+        return resolveFile(file).then((file) => fs.utimes(file, mtime, mtime))
       },
     }
   }

@@ -2,14 +2,19 @@ import { Socket } from "net"
 import { TLSSocket } from "tls"
 
 enum permissions {
-  FileCreate,
-  FileRetrieve,
-  FileOverwrite,
-  FileDelete,
-  FileRename,
-  FolderDelete,
-  FolderCreate,
+  FileCreate = "FileCreate",
+  FileRetrieve = "FileRetrieve",
+  FileOverwrite = "FileOverwrite",
+  FileDelete = "FileDelete",
+  FileRename = "FileRename",
+  FolderDelete = "FolderDelete",
+  FolderCreate = "FolderCreate",
 }
+
+const leastPrivilege = Object.fromEntries(
+  Object.keys(permissions).map((k) => [`allow${k}`, false])
+) as Permissions
+
 type AnonymousPermissions = {
   -readonly [k in keyof typeof permissions as `allowAnonymous${k &
     string}`]?: boolean
@@ -18,19 +23,6 @@ type UserPermissions = {
   -readonly [k in keyof typeof permissions as `allowUser${k &
     string}`]?: boolean
 }
-type UserCredential = {
-  password?: string
-  allowLoginWithoutPassword?: boolean
-  basefolder?: string
-} & UserPermissions
-
-export type AuthOptions = {
-  allowAnonymousLogin?: boolean
-  username?: string
-  user?: ({ username: string } & UserCredential)[] // why iterate an array when could map {[username]: credential}
-} & AnonymousPermissions &
-  UserCredential
-
 export type Permissions = {
   -readonly [k in keyof typeof permissions as `allow${k & string}`]: boolean
 }
@@ -40,45 +32,20 @@ export type Credential = {
   basefolder?: string
 } & Permissions
 
-const leastPrivilege = Object.fromEntries(
-  Object.keys(permissions).map((k) => [`allow${k}`, false])
-) as Permissions
-
-function getCredentialForAnon(
-  password: string,
-  anonPermissions: AnonymousPermissions
-): Credential {
-  const credential: Credential = Object.assign(
-    { username: `anon(${password})` },
-    leastPrivilege
-  )
-  for (const k in permissions) {
-    const ak = `allowAnonymous${k}` as keyof AnonymousPermissions
-    if (ak in anonPermissions) {
-      credential[`allow${k}` as keyof Permissions] = anonPermissions[ak]
-    }
-  }
-  return credential
-}
-
-function getCredentialForUser(
-  username: string,
-  { basefolder, ...userPermissions }: UserCredential,
-  config: UserCredential = {}
-): Credential {
-  // apply top-level allowUser* permissions as default for all users
-  if (config) userPermissions = Object.assign({}, config, userPermissions)
-
-  const credential: Credential = Object.assign({ username }, leastPrivilege)
-  if (basefolder) credential.basefolder = basefolder
-  for (const k in permissions) {
-    const ak = `allowUser${k}` as keyof UserPermissions
-    if (ak in userPermissions) {
-      credential[`allow${k}` as keyof Permissions] = userPermissions[ak]
-    }
-  }
-  return credential
-}
+type UserOptions = {
+  username: string
+  password?: string
+  allowLoginWithoutPassword?: boolean
+  basefolder?: string
+} & UserPermissions
+export type AuthOptions = {
+  allowAnonymousLogin?: boolean
+  username?: string
+  password?: string
+  allowLoginWithoutPassword?: boolean
+  user?: UserOptions[] // why iterate an array when could map {[username]: credential}
+} & AnonymousPermissions &
+  UserPermissions
 
 export enum LoginType {
   None,
@@ -113,6 +80,40 @@ export default function ({
   allowAnonymousLogin,
   ...config
 }: AuthOptions): AuthHandlers {
+
+  const leastPrivilege = Object.fromEntries(
+    Object.keys(permissions).map((k) => [`allow${k}`, false])
+  ) as Permissions
+
+  function getCredentialForAnon(password: string): Credential {
+    return {
+      ...leastPrivilege,
+      ...Object.fromEntries(
+        Object.entries({ ...config, username: `anon(${password})` })
+          .filter(([key]) => !key.startsWith("allowUser"))
+          .map(([key, value]) => [
+            key.replace(/^allowAnonymous/, "allow"),
+            value,
+          ])
+      ),
+    } as Credential
+  }
+
+  function getCredentialForUser({
+    password: _,
+    allowLoginWithoutPassword: __,
+    ...user
+  }: UserOptions): Credential {
+    return {
+      ...leastPrivilege,
+      ...Object.fromEntries(
+        Object.entries({ ...config, ...user })
+          .filter(([key]) => !key.startsWith("allowAnonymous"))
+          .map(([key, value]) => [key.replace(/^allowUser/, "allow"), value])
+      ),
+    } as Credential
+  }
+
   return {
     userLoginType(
       _client: Socket | TLSSocket,
@@ -127,7 +128,7 @@ export default function ({
         const user = users.find(({ username: user }) => user === username)
         if (user) {
           if (user.allowLoginWithoutPassword) {
-            onAuthenticated(getCredentialForUser(username, user, config))
+            onAuthenticated(getCredentialForUser(user))
             return LoginType.NoPassword
           } else {
             return LoginType.Password
@@ -135,7 +136,7 @@ export default function ({
         }
       } else if (username === defaultUsername) {
         if (allowLoginWithoutPassword === true) {
-          onAuthenticated(getCredentialForUser(defaultUsername, config))
+          onAuthenticated(getCredentialForUser({ username }))
           return LoginType.NoPassword
         } else {
           return LoginType.Password
@@ -152,7 +153,7 @@ export default function ({
     ): LoginType {
       if (username === "anonymous") {
         if (allowAnonymousLogin) {
-          onAuthenticated(getCredentialForAnon(password, config))
+          onAuthenticated(getCredentialForAnon(password))
           return LoginType.Anonymous
         }
       } else if (users?.length > 0) {
@@ -162,7 +163,7 @@ export default function ({
             (pass === password || allowLoginWithoutPassword)
         )
         if (user) {
-          onAuthenticated(getCredentialForUser(username, user, config))
+          onAuthenticated(getCredentialForUser(user))
           return user.allowLoginWithoutPassword
             ? LoginType.NoPassword
             : LoginType.Password
@@ -171,7 +172,7 @@ export default function ({
         username === defaultUsername &&
         (password === defaultPassword || allowLoginWithoutPassword)
       ) {
-        onAuthenticated(getCredentialForUser(defaultUsername, config))
+        onAuthenticated(getCredentialForUser({ username }))
         return allowLoginWithoutPassword
           ? LoginType.NoPassword
           : LoginType.Password

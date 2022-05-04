@@ -61,23 +61,32 @@ export type ServerOptions = {
   maxConnections?: number
   timeout?: number
   dataTimeout?: number
-  // overlooks misc options for TLS servers and TLS client/server sockets, e.g. session resume, OCSP, pre-shared keys
-  tls?: SecureContextOptions // excludes CommonConnectionOptions, e.g. client certificates and SNI
+  tls?: SecureContextOptions
+  basefolder?: string
   auth?: ComposableAuthHandlerFactory
   store?: ComposableStoreFactory
-}
+} & AuthOptions
+
 interface FTPCommandTable {
   [fn: string]: (cmd: string, arg: string) => void
 }
 
 export function createFtpServer({
   tls: tlsOptions,
+  basefolder,
   auth,
   store,
-  basefolder,
   ...options
-}: ServerOptions & AuthOptions = {}) {
-  options = {
+}: ServerOptions = {}) {
+  const {
+    port,
+    securePort,
+    minDataPort,
+    maxConnections,
+    timeout,
+    dataTimeout,
+    ...authOptions
+  } = {
     port: 21,
     minDataPort: 1024,
     maxConnections: 10,
@@ -115,7 +124,7 @@ export function createFtpServer({
 
   // compose auth and storage backend handler factories
   const authFactory = auth?.(internalAuth) ?? internalAuth
-  let { userLoginType, userAuthenticate } = authFactory(options)
+  let { userLoginType, userAuthenticate } = authFactory(authOptions)
 
   const localStoreFactory = localStore(basefolder),
     storeFactory = store?.(localStoreFactory) ?? localStoreFactory
@@ -125,7 +134,7 @@ export function createFtpServer({
 
   // setup FTP on TLS
   let tlsServer: Promise<TlsServer>
-  if ("securePort" in options) {
+  if (securePort) {
     tlsServer = secureOptions.then((secureOptions) =>
       createSecureServer(secureOptions, SessionHandler)
     )
@@ -138,12 +147,12 @@ export function createFtpServer({
   const emitter = new EventEmitter()
   return Object.assign(emitter, {
     async start() {
-      setupServer(tcpServer).listen(options.port, function () {
+      setupServer(tcpServer).listen(port, function () {
         emitListenEvent.call(this, "tcp")
       })
 
       if (tlsServer) {
-        setupServer(await tlsServer).listen(options.securePort, function () {
+        setupServer(await tlsServer).listen(securePort, function () {
           emitListenEvent.call(this, "tls")
         })
       }
@@ -151,7 +160,7 @@ export function createFtpServer({
       function setupServer(server: Server) {
         // concurrent connections, distinct from the listen backlog
         // (excess connections are immediately closed after connecting)
-        server.maxConnections = options.maxConnections
+        server.maxConnections = maxConnections
         return server.on(
           "error",
           function ServerErrorHandler(err: NodeJS.ErrnoException) {
@@ -190,8 +199,8 @@ export function createFtpServer({
       cleanupLocalStore()
     },
 
-    reloadAuth(options: AuthOptions) {
-      ;({ userLoginType, userAuthenticate } = authFactory(options))
+    reloadAuth(authOptions: AuthOptions) {
+      ;({ userLoginType, userAuthenticate } = authFactory(authOptions))
     },
   })
 
@@ -208,8 +217,8 @@ export function createFtpServer({
     cmdSocket.on("error", SessionErrorHandler("command socket"))
     cmdSocket.on("data", CmdHandler)
 
-    if ("timeout" in options) {
-      cmdSocket.setTimeout(options.timeout, () => {
+    if (timeout) {
+      cmdSocket.setTimeout(timeout, () => {
         authenticated && emitLogoffEvent()
         client.respond("221", "Goodbye")
         cmdSocket.end()
@@ -981,9 +990,9 @@ export function createFtpServer({
       dataPort.maxConnections = 1
 
       dataPort.on("error", SessionErrorHandler("passive data port"))
-      if ("dataTimeout" in options || "timeout" in options) {
+      if (dataTimeout ?? timeout) {
         dataPort.on("connection", (socket) => {
-          socket.setTimeout(options.dataTimeout ?? options.timeout, () => {
+          socket.setTimeout(dataTimeout ?? timeout, () => {
             socket.destroy()
           })
         })
@@ -1010,7 +1019,6 @@ export function createFtpServer({
        */
       function findAvailablePort() {
         return new Promise<number>((resolve, reject) => {
-          const { minDataPort, maxConnections } = options
           if (minDataPort > 0 && minDataPort < 65535) {
             return checkAvailablePort(minDataPort)
           }
@@ -1084,8 +1092,8 @@ export function createFtpServer({
               emitDebugMessage(`data connection secured`)
             }
 
-            if ("dataTimeout" in options || "timeout" in options) {
-              socket.setTimeout(options.dataTimeout || options.timeout, () => {
+            if (dataTimeout ?? timeout) {
+              socket.setTimeout(dataTimeout ?? timeout, () => {
                 socket.destroy()
               })
             }

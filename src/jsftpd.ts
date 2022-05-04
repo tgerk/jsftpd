@@ -26,7 +26,7 @@ import util from "util"
 import path from "path"
 import { Readable, Writable } from "stream"
 import { EventEmitter } from "events"
-import { readFile } from "fs/promises"
+import { readFileSync } from "fs"
 
 import { deasciify, asciify } from "./ascii"
 // import { tee } from "./ascii"
@@ -70,9 +70,7 @@ interface FTPCommandTable {
   [fn: string]: (cmd: string, arg: string) => void
 }
 
-type IncomingConnectionSource = Server & { connectionQueue: Promise<Socket>[] }
-
-export async function createFtpServer({
+export function createFtpServer({
   tls: tlsOptions,
   auth,
   store,
@@ -86,35 +84,34 @@ export async function createFtpServer({
     ...options,
   }
 
-  tlsOptions = {
-    honorCipherOrder: true,
-    // rejectUnauthorized: false, // enforce CA trust
-    ...tlsOptions,
+  async function getSecureOptions(
+    tlsOptions: SecureContextOptions
+  ): Promise<SecureContextOptions> {
+    tlsOptions = {
+      honorCipherOrder: true,
+      // rejectUnauthorized: false, // enforce CA trust
+      ...tlsOptions,
+    }
+    if (
+      !("pfx" in tlsOptions) &&
+      (!("key" in tlsOptions) || !("cert" in tlsOptions))
+    ) {
+      // generate self-signed certificate
+      const { cert, key } = await import("./cert")
+      tlsOptions.cert = cert
+      tlsOptions.key = key
+    }
+
+    return tlsOptions
   }
 
-  if (!("key" in tlsOptions) || !("cert" in tlsOptions)) {
-    // because we implement FTPS (via AUTH TLS), but not necessarily SFTP (default port 990)
-    //  use certs module to provide a backup self-signed certificate
-    const { cert, key } = await import("./cert")
-    tlsOptions.cert = cert
-    tlsOptions.key = key
-  } else {
-    // TODO: expand to support all schemes fs/promises.readFile can handle
-    if (tlsOptions.cert.toString().startsWith("file:")) {
-      tlsOptions.cert = await readFile(tlsOptions.cert.toString().substring(5))
-    }
-    if (tlsOptions.key.toString().startsWith("file:")) {
-      tlsOptions.key = await readFile(tlsOptions.key.toString().substring(5))
-    }
-    if (tlsOptions.passphrase.startsWith("file:")) {
-      tlsOptions.passphrase = await readFile(
-        tlsOptions.passphrase.substring(5)
-      ).toString()
-    }
-  }
-
-  const tlsContext = createSecureContext(tlsOptions),
-    useTls = "securePort" in options
+  // need to always prepare TLS certs and secure context,
+  //  because we implement FTPS (via AUTH TLS, like STARTTLS),
+  //  even if not necessarily SFTP(default port 990)
+  const secureOptions = getSecureOptions(tlsOptions),
+    secureContext = secureOptions.then((options) =>
+      createSecureContext(options)
+    )
 
   // compose auth and storage backend handler factories
   const authFactory = auth?.(internalAuth) ?? internalAuth
@@ -127,9 +124,11 @@ export async function createFtpServer({
   const tcpServer = createServer(SessionHandler)
 
   // setup FTP on TLS
-  let tlsServer: TlsServer
-  if (useTls) {
-    tlsServer = createSecureServer(tlsOptions, SessionHandler)
+  let tlsServer: Promise<TlsServer>
+  if ("securePort" in options) {
+    tlsServer = secureOptions.then((secureOptions) =>
+      createSecureServer(secureOptions, SessionHandler)
+    )
   }
 
   // track client sessions
@@ -138,24 +137,22 @@ export async function createFtpServer({
 
   const emitter = new EventEmitter()
   return Object.assign(emitter, {
-    start() {
-      setupServer(tcpServer)
-      tcpServer.listen(options.port, function () {
+    async start() {
+      setupServer(tcpServer).listen(options.port, function () {
         emitListenEvent.call(this, "tcp")
       })
 
-      if (useTls) {
-        setupServer(tlsServer)
-        tlsServer.listen(options.securePort, function () {
+      if (tlsServer) {
+        setupServer(await tlsServer).listen(options.securePort, function () {
           emitListenEvent.call(this, "tls")
         })
       }
 
-      function setupServer(server: Server | TlsServer) {
+      function setupServer(server: Server) {
         // concurrent connections, distinct from the listen backlog
         // (excess connections are immediately closed after connecting)
         server.maxConnections = options.maxConnections
-        server.on(
+        return server.on(
           "error",
           function ServerErrorHandler(err: NodeJS.ErrnoException) {
             emitter.emit(
@@ -180,13 +177,13 @@ export async function createFtpServer({
       }
     },
 
-    stop() {
+    async stop() {
       for (const session of clientSessions) {
         session.destroy()
       }
 
       tcpServer.close()
-      useTls && tlsServer.close()
+      tlsServer && (await tlsServer).close()
     },
 
     cleanup() {
@@ -257,7 +254,12 @@ export async function createFtpServer({
       fileRename: Store["fileRename"],
       fileSetTimes: Store["fileSetTimes"]
 
-    let dataPort: IncomingConnectionSource | TcpSocketConnectOpts,
+    let dataPort:
+        | TcpSocketConnectOpts
+        | (Server & {
+            initConnections(): () => void
+            nextConnection: () => Promise<Socket>
+          }),
       renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
 
     emitDebugMessage(`established FTP connection`)
@@ -321,15 +323,17 @@ export async function createFtpServer({
             resetSession() // reset session variables (User, CWD, Mode, etc.  RFC-4217)
 
             // Start TLS
-            client = Object.assign(
-              new TLSSocket(client, {
-                secureContext: tlsContext,
-                isServer: true,
-              }),
-              { respond: client.respond }
-            )
-            client.on("data", CmdHandler)
-            emitDebugMessage(`command connection secured`)
+            secureContext.then((secureContext) => {
+              client = Object.assign(
+                new TLSSocket(client, {
+                  secureContext,
+                  isServer: true,
+                }),
+                { respond: client.respond }
+              )
+              client.on("data", CmdHandler)
+              emitDebugMessage(`command connection secured`)
+            })
             break
           default:
             client.respond("504", `Unsupported auth type ${auth}`)
@@ -942,30 +946,38 @@ export async function createFtpServer({
       emitLoginEvent()
     }
 
-    function setupPassiveListen() {
+    async function setupPassiveListen() {
       if (dataPort instanceof Server) {
         dataPort.close()
       }
 
+      // need to handle connections as they come (not wait for client command to arrive)
       dataPort = Object.assign(
         "encrypted" in client && protectedMode
-          ? createSecureServer(tlsOptions)
-          : createServer(),
+          ? createSecureServer(await secureOptions, DataHandler)
+          : createServer(DataHandler),
         {
-          connectionQueue: [],
+          _resolveNext: undefined,
+          _connectionQueue: [],
+          resolveConnection(socket?: Socket) {
+            this._resolveNext?.(socket)
+            this._connectionQueue.push(
+              new Promise<Socket>((resolve) => {
+                this._resolveNext = resolve
+              })
+            )
+          },
+          nextConnection() {
+            return this._connectionQueue.shift()
+          },
+          initConnections() {
+            // initialize Promise for first connection
+            return this.resolveConnection()
+          },
         }
       )
 
-      let resolveNext: (value: Socket | PromiseLike<Socket>) => void
-      function resolveConnection(socket?: Socket) {
-        resolveNext?.(socket)
-        ;(dataPort as IncomingConnectionSource).connectionQueue.push(
-          new Promise<Socket>((resolve) => {
-            resolveNext = resolve
-          })
-        )
-      }
-
+      dataPort.initConnections()
       dataPort.maxConnections = 1
 
       dataPort.on("error", SessionErrorHandler("passive data port"))
@@ -976,21 +988,6 @@ export async function createFtpServer({
           })
         })
       }
-
-      resolveConnection() // initialize
-      dataPort.on(
-        "addContext" in dataPort ? "secureConnection" : "connection",
-        (socket: Socket) => {
-          emitDebugMessage(`data connection established`)
-          socket.on("error", SessionErrorHandler("passive data connection"))
-          socket.on("close", () => {
-            emitDebugMessage(`data connection has closed`)
-          })
-
-          // to avoid race condition, need to handle connections as they come (not wait for client command to arrive)
-          resolveConnection(socket)
-        }
-      )
 
       return findAvailablePort().then(
         (port) =>
@@ -1037,6 +1034,16 @@ export async function createFtpServer({
           }
         })
       }
+
+      function DataHandler(socket: Socket) {
+        emitDebugMessage(`data connection established`)
+        socket.on("error", SessionErrorHandler("passive data connection"))
+        socket.on("close", () => {
+          emitDebugMessage(`data connection has closed`)
+        })
+
+        this.resolveConnection(socket)
+      }
     }
 
     function setupActiveConnect(host: string, port: number) {
@@ -1054,8 +1061,8 @@ export async function createFtpServer({
 
         // TODO: reject if port is not accepting connections
         // TODO: reject if no connection within a reasonable time
-
-        return dataPort.connectionQueue.shift()
+        // cross fingers the client stays in sync
+        return dataPort.nextConnection()
       }
 
       if (dataPort instanceof Object) {
@@ -1067,11 +1074,11 @@ export async function createFtpServer({
               "encrypted" in client && protectedMode
             }]`
           )
-          let socket = connect(dataPort as TcpSocketConnectOpts, () => {
+          let socket = connect(dataPort as TcpSocketConnectOpts, async () => {
             emitDebugMessage(`data connection established`)
             if ("encrypted" in client && protectedMode) {
               socket = new TLSSocket(socket, {
-                secureContext: tlsContext,
+                secureContext: await secureContext,
                 isServer: true,
               })
               emitDebugMessage(`data connection secured`)

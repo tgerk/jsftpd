@@ -18,7 +18,7 @@ beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
 test("error message when not logged in", async () => {
-  server = await createFtpServer({ port: cmdPortTCP })
+  server = createFtpServer({ port: cmdPortTCP })
   server.start()
 
   const cmdSocket = new ExpectSocket()
@@ -32,7 +32,7 @@ test("error message when not logged in", async () => {
 })
 
 test("login as anonymous not allowed by default", async () => {
-  server = await createFtpServer({ port: cmdPortTCP })
+  server = createFtpServer({ port: cmdPortTCP })
   server.start()
 
   const cmdSocket = new ExpectSocket()
@@ -48,7 +48,7 @@ test("login as anonymous not allowed by default", async () => {
 })
 
 test("login as anonymous when enabled", async () => {
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     allowAnonymousLogin: true,
   })
@@ -71,7 +71,7 @@ test("login as anonymous when enabled", async () => {
 })
 
 test("login with default user settings", async () => {
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     username: "john",
     password: "doe",
@@ -93,7 +93,7 @@ test("login with default user settings", async () => {
 })
 
 test("login with default user settings without password allowed", async () => {
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     username: "john",
     allowLoginWithoutPassword: true,
@@ -123,7 +123,7 @@ test("login with user settings", async () => {
       password: "myers",
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -165,7 +165,7 @@ test("login with user settings without password allowed", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -198,7 +198,7 @@ test("login with user settings and wrong user rejected", async () => {
       password: "doe",
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -220,7 +220,7 @@ test("login with user settings and wrong password rejected", async () => {
       password: "doe",
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -246,7 +246,7 @@ test("login with active reload user settings", async () => {
       password: "doe",
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()

@@ -37,7 +37,7 @@ test("test LIST message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -83,7 +83,7 @@ test("test MLSD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -129,7 +129,7 @@ test("test MLSD message over passive secure connection", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -186,7 +186,7 @@ test("test MLSD message over secure active connection", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -245,7 +245,7 @@ test("test MLSD message with handler", async () => {
     },
   ]
   const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,

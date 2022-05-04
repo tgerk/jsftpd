@@ -38,7 +38,7 @@ test("test STOR message without permission", async () => {
       allowUserFileCreate: false,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -78,7 +78,7 @@ test("test STOR message", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -143,7 +143,7 @@ test("test passive data connection times out", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -181,7 +181,7 @@ test("test STOR message with ASCII", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -248,7 +248,7 @@ test("test STOR message overwrite not allowed", async () => {
       allowUserFileOverwrite: false,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -327,7 +327,7 @@ test("test STOR message with handler", async () => {
     )
   )
 
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -390,7 +390,7 @@ test("test STOR message with handler fails", async () => {
     )
   )
 
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -441,7 +441,7 @@ test("test STOR over secure passive connection", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -499,7 +499,7 @@ test("test STOR over active secure connection", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,

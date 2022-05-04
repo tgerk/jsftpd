@@ -33,7 +33,7 @@ beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
 test("create ftpd instance without options created with default values", async () => {
-  server = await createFtpServer()
+  server = createFtpServer()
   /* Bad checks:  "show, don't tell" principle means to test the effects & behavior of a server created with all defaults
       an adequate implementation can behave identically, regardless of inspection of internal data structures
     expect(server._opt.cnf.allowAnonymousFileDelete).toBeFalsy()
@@ -71,7 +71,7 @@ test("create ftpd instance without options created with default values", async (
 })
 
 test("connect to secure ftp server", async () => {
-  server = await createFtpServer({
+  server = createFtpServer({
     securePort: cmdPortTLS,
   })
   server.start()
@@ -86,7 +86,7 @@ test("connect to secure ftp server", async () => {
 })
 
 test("ftp server can be started on non default ports", async () => {
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP + 2,
     securePort: cmdPortTLS + 2,
   })
@@ -110,7 +110,7 @@ test("ftp server can be started on non default ports", async () => {
 
 test("ftp server fails when basefolder does not exist", async () => {
   try {
-    server = await createFtpServer({ basefolder: "/NOTEXISTING" })
+    server = createFtpServer({ basefolder: "/NOTEXISTING" })
   } catch (err) {
     expect(err.message).toMatch("Base folder must exist")
   }
@@ -123,7 +123,7 @@ test("test unknown message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -149,7 +149,7 @@ test("test CLNT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -175,7 +175,7 @@ test("test SYST message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -199,7 +199,7 @@ test("test FEAT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -223,7 +223,7 @@ test("test PWD message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -249,7 +249,7 @@ test("test QUIT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -273,7 +273,7 @@ test("test PBSZ message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -297,7 +297,7 @@ test("test TYPE message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -327,7 +327,7 @@ test("test OPTS message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -359,7 +359,7 @@ test("test PROT message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -397,7 +397,7 @@ test("test REST message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -428,7 +428,7 @@ test("test MKD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -459,7 +459,7 @@ test("test MKD message cannot create folder without permission", async () => {
       allowUserFolderCreate: false,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -487,7 +487,7 @@ test("test RMD message", async () => {
       allowUserFolderDelete: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -523,7 +523,7 @@ test("test RMD message cannot delete folder without permission", async () => {
       allowUserFolderDelete: false,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -554,7 +554,7 @@ test("test CWD message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -601,7 +601,7 @@ test("test MFMT message", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -663,7 +663,7 @@ test("test MFMT message with handler", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     store: addFactoryExtensions({
@@ -703,7 +703,7 @@ test("test MFMT message file does not exist", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -750,7 +750,7 @@ test("test DELE message without permission", async () => {
       allowUserFileDelete: false,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -797,7 +797,7 @@ test("test DELE message relative path", async () => {
       allowUserFileDelete: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -847,7 +847,7 @@ test("test DELE message absolute path", async () => {
       allowUserFileDelete: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -893,7 +893,7 @@ test("test SIZE message", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -942,7 +942,7 @@ test("test AUTH message", async () => {
       allowLoginWithoutPassword: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -977,7 +977,7 @@ test("test PORT message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()
@@ -1029,7 +1029,7 @@ test("test EPRT message", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({ port: cmdPortTCP, user: users })
   server.start()
 
   let cmdSocket = new ExpectSocket()

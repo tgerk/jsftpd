@@ -37,7 +37,7 @@ test("test outbound filename transformation", async () => {
       allowUserFolderCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -108,7 +108,7 @@ test("test inbound filename transformation", async () => {
       allowUserFileCreate: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,

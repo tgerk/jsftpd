@@ -31,7 +31,7 @@ test("test RNFR message file does not exist", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -78,7 +78,7 @@ test("test RNFR/RNTO message", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,
@@ -156,7 +156,7 @@ test("test RNFR/RNTO message using handlers", async () => {
           fromFile === "mytestfile" &&
           Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
       )
-  server = await createFtpServer({
+  server = createFtpServer({
     port: 50021,
     user: users,
     store: addFactoryExtensions({
@@ -208,7 +208,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
           fromFile === "mytestfile" &&
           Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
       )
-  server = await createFtpServer({
+  server = createFtpServer({
     port: 50021,
     user: users,
     store: addFactoryExtensions({
@@ -251,7 +251,7 @@ test("test RNFR/RNTO message file already exists", async () => {
       allowUserFileRename: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: 50021,
     user: users,
     minDataPort: dataPort,

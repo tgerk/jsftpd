@@ -39,7 +39,7 @@ test("test RETR message not allowed", async () => {
       allowUserFileRetrieve: false,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -86,7 +86,7 @@ test("test RETR message", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -150,7 +150,7 @@ test("test RETR message with ASCII", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -246,7 +246,7 @@ test("test RETR message with handler", async () => {
     )
   )
 
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -331,7 +331,7 @@ test("test RETR message with handler fails", async () => {
       })
     )
   )
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -397,7 +397,7 @@ test("test RETR message no active or passive mode", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     store: addFactoryExtensions({
@@ -439,7 +439,7 @@ test("test RETR over secure passive connection", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,
@@ -514,7 +514,7 @@ test("test RETR over active secure connection", async () => {
       allowUserFileRetrieve: true,
     },
   ]
-  server = await createFtpServer({
+  server = createFtpServer({
     port: cmdPortTCP,
     user: users,
     minDataPort: dataPort,

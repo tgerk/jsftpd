@@ -10,7 +10,8 @@
 import { execFileSync } from "child_process"
 import { existsSync, readFileSync } from "fs"
 
-const crtFile = "server.crt", keyFile = "server.key"
+const crtFile = "server.crt",
+  keyFile = "server.key"
 if (!existsSync(crtFile) || !existsSync(keyFile)) {
   // one-shot self-signed cert:
   execFileSync(

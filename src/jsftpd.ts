@@ -160,7 +160,7 @@ export async function createFtpServer({
           function ServerErrorHandler(err: NodeJS.ErrnoException) {
             emitter.emit(
               "error",
-              `server error ${formatDateIso()} ${util.inspect(err, {
+              `server error ${new Date().toISOString()} ${util.inspect(err, {
                 showHidden: false,
                 depth: null,
                 breakLength: Infinity,
@@ -671,10 +671,7 @@ export async function createFtpServer({
                 client.respond("213", fstat.size.toString())
                 return
               case "MDTM":
-                client.respond(
-                  "213",
-                  formatDate_YYYYMMDDHHmmss_sss(fstat.mtime)
-                )
+                client.respond("213", format_rfc3659_time(fstat.mtime))
                 return
             }
           },
@@ -878,7 +875,7 @@ export async function createFtpServer({
        */
       MFMT: function (cmd: string, arg: string) {
         const [time, ...rest] = arg.split(/\s+/),
-          mtime = parseDate_YYYYMMDDHHmm(time)
+          mtime = parse_rfc3659_time(time)
         fileSetTimes(rest.join(" "), mtime).then(
           () => {
             client.respond("253", "Date/time changed okay")
@@ -1100,11 +1097,11 @@ export async function createFtpServer({
     }
 
     function emitLogMessage(msg: string | { toString: () => string }) {
-      emitter.emit("log", `${formatDateIso()} ${clientInfo} ${msg}`)
+      emitter.emit("log", `${new Date().toISOString()} ${clientInfo} ${msg}`)
     }
 
     function emitDebugMessage(msg: string | { toString: () => string }) {
-      emitter.emit("debug", `${formatDateIso()} ${clientInfo} ${msg}`)
+      emitter.emit("debug", `${new Date().toISOString()} ${clientInfo} ${msg}`)
     }
 
     function emitLoginEvent() {
@@ -1152,7 +1149,7 @@ export async function createFtpServer({
       return function (error: NodeJS.ErrnoException) {
         emitter.emit(
           "warn", // don't say "error" -- Jest somehow detects "error" events that don't have a handler
-          `${socketType} error ${clientInfo} ${formatDateIso()} ${util.inspect(
+          `${socketType} error ${clientInfo} ${new Date().toISOString()} ${util.inspect(
             error,
             {
               showHidden: false,
@@ -1205,7 +1202,7 @@ function formatListing(format = "LIST") {
         util.format(
           "type=%s;modify=%s;%s %s",
           fstat.isDirectory() ? "dir" : "file",
-          formatDate_YYYYMMDDHHmmss_sss(fstat.mtime),
+          format_rfc3659_time(fstat.mtime),
           fstat.isDirectory() ? "" : "size=" + fstat.size.toString() + ";",
           fstat.name
         )
@@ -1223,49 +1220,33 @@ function formatListing(format = "LIST") {
 }
 
 function formatDate_Mmm_DD_HH_mm(mtime: Date): string {
-  const now = new Date(mtime),
-    MM = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ][now.getMonth()],
-    DD = now.getDate().toString().padStart(2, "0"),
-    H = now.getHours().toString().padStart(2, "0"),
-    M = now.getMinutes().toString().padStart(2, "0")
-  return `${MM} ${DD} ${H}:${M}`
+  mtime = new Date(mtime)
+  return mtime.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour12: false,
+    hour: "numeric",
+    minute: "2-digit",
+  })
 }
 
-function formatDate_YYYYMMDDHHmmss_sss(mtime: Date): string {
-  const now = new Date(mtime),
-    MM = (now.getMonth() + 1).toString().padStart(2, "0"),
-    DD = now.getDate().toString().padStart(2, "0"),
-    H = now.getHours().toString().padStart(2, "0"),
-    M = now.getMinutes().toString().padStart(2, "0"),
-    S = now.getSeconds().toString().padStart(2, "0"),
-    s = now.getMilliseconds().toString().padStart(3, "0")
-  return `${now.getFullYear()}${MM}${DD}${H}${M}${S}.${s}`
+function format_rfc3659_time(mtime: Date): string {
+  mtime = new Date(mtime)
+  const MM = (mtime.getMonth() + 1).toString().padStart(2, "0"),
+    DD = mtime.getDate().toString().padStart(2, "0"),
+    H = mtime.getHours().toString().padStart(2, "0"),
+    M = mtime.getMinutes().toString().padStart(2, "0"),
+    S = mtime.getSeconds().toString().padStart(2, "0"),
+    s = mtime.getMilliseconds().toString().padStart(3, "0")
+  return `${mtime.getFullYear()}${MM}${DD}${H}${M}${S}.${s}`
 }
 
-function parseDate_YYYYMMDDHHmm(time: string): number {
-  const Y = time.substring(0, 4),
-    M = time.substring(4, 6),
-    D = time.substring(6, 8),
-    Hrs = time.substring(8, 10),
-    Min = time.substring(10, 12),
-    Sec = time.substring(12, 14)
-  return Date.parse(`${Y}-${M}-${D}T${Hrs}:${Min}:${Sec}+00:00`) / 1000
-}
-
-function formatDateIso(date?: Date): string {
-  date = date || new Date()
-  return date.toISOString()
+function parse_rfc3659_time(rfc3659_time: string): Date {
+  const Y = rfc3659_time.substring(0, 4),
+    M = rfc3659_time.substring(4, 6),
+    D = rfc3659_time.substring(6, 8),
+    Hrs = rfc3659_time.substring(8, 10),
+    Min = rfc3659_time.substring(10, 12),
+    Sec = rfc3659_time.substring(12, 14)
+  return new Date(`${Y}-${M}-${D}T${Hrs}:${Min}:${Sec}+00:00`)
 }

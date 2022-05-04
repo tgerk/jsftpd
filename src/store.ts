@@ -48,7 +48,7 @@ export interface Store {
   fileRename(
     fromFile: string
   ): Promise<((toFile: string) => Promise<void>) & { fromFile: string }>
-  fileSetTimes(file: string, mtime: number): Promise<void>
+  fileSetTimes(file: string, mtime: Date, atime?: Date): Promise<void>
 }
 
 export type StoreOptions = {
@@ -294,8 +294,8 @@ export default function (baseFolder: string) {
         )
       },
 
-      fileSetTimes(file: string, mtime: number): Promise<void> {
-        return resolveFile(file).then((file) => fs.utimes(file, mtime, mtime))
+      fileSetTimes(file: string, mtime: Date, atime: Date): Promise<void> {
+        return resolveFile(file).then((file) => fs.utimes(file, atime ?? mtime, mtime))
       },
     }
   }

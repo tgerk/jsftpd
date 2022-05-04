@@ -633,7 +633,7 @@ test("test MFMT message", async () => {
   )
 
   expect(
-    await cmdSocket.command("MFMT 20150215120000 mytestfile").response()
+    await cmdSocket.command("MFMT 20250215123456 mytestfile").response()
   ).toBe("253 Date/time changed okay")
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
@@ -647,7 +647,7 @@ test("test MFMT message", async () => {
   dataSocket = new ExpectSocket()
   const data = await dataSocket.connect(dataPort, localhost).receive()
   expect(data.toString().trim()).toMatch("type=file")
-  expect(data.toString().trim()).toMatch("modify=20150215")
+  expect(data.toString().trim()).toMatch("modify=20250215")
   expect(data.toString().trim()).toMatch("size=15")
   expect(data.toString().trim()).toMatch("mytestfile")
 

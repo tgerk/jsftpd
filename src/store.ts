@@ -295,7 +295,9 @@ export default function (baseFolder: string) {
       },
 
       fileSetTimes(file: string, mtime: Date, atime: Date): Promise<void> {
-        return resolveFile(file).then((file) => fs.utimes(file, atime ?? mtime, mtime))
+        return resolveFile(file).then((file) =>
+          fs.utimes(file, atime ?? mtime, mtime)
+        )
       },
     }
   }

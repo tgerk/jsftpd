@@ -80,7 +80,6 @@ export default function ({
   allowAnonymousLogin,
   ...config
 }: AuthOptions): AuthHandlers {
-
   const leastPrivilege = Object.fromEntries(
     Object.keys(permissions).map((k) => [`allow${k}`, false])
   ) as Permissions

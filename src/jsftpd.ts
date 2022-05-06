@@ -37,7 +37,7 @@ import internalAuth, {
   Credential,
 } from "./auth"
 
-import localStore, {
+import localBackend, {
   getBaseFolder as getLocalStoreBaseFolder,
   cleanup as cleanupLocalStore,
   StoreFactory,
@@ -124,7 +124,7 @@ export function createFtpServer({
   const authFactory = auth?.(internalAuth) ?? internalAuth
   let { userLoginType, userAuthenticate } = authFactory(authOptions)
 
-  const localStoreFactory = localStore(basefolder),
+  const localStoreFactory = localBackend(basefolder),
     storeFactory = store?.(localStoreFactory) ?? localStoreFactory
 
   // setup FTP on TCP
@@ -1198,7 +1198,7 @@ export function createFtpServer({
           `exception on command [${[cmd, ...args].join(" ")}]`
         )(err)
         client.respond("550", "Unexpected server error")
-        client.end()
+        // client.end()
       }
     }
   }

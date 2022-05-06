@@ -52,7 +52,8 @@ export interface Store {
 }
 
 export type StoreOptions = {
-  translateFilename?: (x: string) => string
+  resolveFoldername?: (x: string) => string
+  resolveFilename?: (x: string) => string
 }
 
 export type StoreFactory = (
@@ -65,20 +66,29 @@ export type StoreFactory = (
 let defaultBaseFolder = path.join(process.cwd(), "__ftproot__"),
   cleanupBaseFolder: () => void
 
-export default function (baseFolder: string) {
-  if (baseFolder) {
-    if (existsSync(baseFolder)) {
-      defaultBaseFolder = baseFolder
-    } else {
-      throw Object.assign(Error(`Base folder must exist`), {
-        code: Errors.ENOTDIR,
-      })
+// export accessor and cleanup util
+export function getBaseFolder() {
+  return defaultBaseFolder
+}
+
+export function cleanup() {
+  cleanupBaseFolder?.()
+}
+
+export default function localStoreFactoryInit(baseFolder: string) {
+  if (!baseFolder) {
+    if (!existsSync(defaultBaseFolder)) {
+      mkdirSync(defaultBaseFolder)
+      cleanupBaseFolder = function () {
+        rmSync(defaultBaseFolder, { force: true, recursive: true })
+      }
     }
-  } else if (!existsSync(defaultBaseFolder)) {
-    mkdirSync(defaultBaseFolder)
-    cleanupBaseFolder = function () {
-      rmSync(defaultBaseFolder, { force: true, recursive: true })
-    }
+  } else if (!existsSync(baseFolder)) {
+    throw Object.assign(Error(`Base folder must exist`), {
+      code: Errors.ENOTDIR,
+    })
+  } else {
+    defaultBaseFolder = baseFolder
   }
 
   return function localStoreFactory(
@@ -88,8 +98,8 @@ export default function (baseFolder: string) {
   ) {
     let currentFolder = "/"
 
-    const { basefolder: baseFolder = defaultBaseFolder } = user,
-      { translateFilename } = options
+    const { resolveFoldername, resolveFilename } = options,
+      { basefolder: baseFolder = defaultBaseFolder } = user
     if (baseFolder != defaultBaseFolder && !existsSync(baseFolder)) {
       throw Object.assign(Error(`User's base folder must exist`), {
         code: Errors.ENOTDIR,
@@ -97,11 +107,11 @@ export default function (baseFolder: string) {
     }
 
     function resolveFolder(folder: string): Promise<string> {
-      // result relative to base folder
       folder =
         folder.charAt(0) === "/"
           ? path.join(baseFolder, folder)
           : path.join(baseFolder, currentFolder, folder)
+      folder = resolveFoldername?.(folder) ?? folder
       return new Promise((resolve) => {
         if (folder.startsWith(baseFolder)) {
           resolve(folder)
@@ -111,12 +121,11 @@ export default function (baseFolder: string) {
     }
 
     function resolveFile(file: string): Promise<string> {
-      // result relative to current folder
       file =
         file.charAt(0) === "/"
           ? path.join(baseFolder, file)
           : path.join(baseFolder, currentFolder, file)
-      file = translateFilename?.(file) ?? file
+      file = resolveFilename?.(file) ?? file
       return new Promise((resolve, reject) => {
         if (file.startsWith(baseFolder)) {
           resolve(file)
@@ -301,13 +310,4 @@ export default function (baseFolder: string) {
       },
     }
   }
-}
-
-// export accessor and cleanup util
-export function getBaseFolder() {
-  return defaultBaseFolder
-}
-
-export function cleanup() {
-  cleanupBaseFolder?.()
 }

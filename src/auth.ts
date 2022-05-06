@@ -11,10 +11,6 @@ enum permissions {
   FolderCreate = "FolderCreate",
 }
 
-const leastPrivilege = Object.fromEntries(
-  Object.keys(permissions).map((k) => [`allow${k}`, false])
-) as Permissions
-
 type AnonymousPermissions = {
   -readonly [k in keyof typeof permissions as `allowAnonymous${k &
     string}`]?: boolean

@@ -34,7 +34,7 @@ export default function composableFactory(
   ): Store {
     const handlers = baseFactory(user, client, {
       ...options,
-      translateFilename: transformInbound,
+      resolveFilename: transformInbound,
     })
 
     return Object.assign(handlers, {

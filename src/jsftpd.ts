@@ -26,10 +26,8 @@ import util from "util"
 import path from "path"
 import { Readable, Writable } from "stream"
 import { EventEmitter } from "events"
-import { readFileSync } from "fs"
 
 import { deasciify, asciify } from "./ascii"
-// import { tee } from "./ascii"
 
 import internalAuth, {
   AuthHandlersFactory,

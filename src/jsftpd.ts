@@ -253,7 +253,7 @@ export function createFtpServer({
         this.write(`${code}${delimiter}${message}\r\n`)
       },
     })
-    
+
     emitDebugMessage(`established FTP connection`)
     client.respond("220", "Welcome")
 

@@ -21,8 +21,7 @@ const cleanup = function () {
       dataServer.close()
       dataServer = null
     }
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -42,7 +41,6 @@ test("test LIST message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -88,7 +86,6 @@ test("test MLSD message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -134,7 +131,6 @@ test("test MLSD message over passive secure connection", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -191,7 +187,6 @@ test("test MLSD message over secure active connection", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -251,7 +246,6 @@ test("test MLSD message with handler", async () => {
     minDataPort: dataPort,
     store: addFactoryExtensions({ folderList }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

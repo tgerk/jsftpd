@@ -16,8 +16,7 @@ const localhost = "127.0.0.1"
 let server
 const cleanup = function () {
   if (server) {
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -58,7 +57,6 @@ test("test outbound filename transformation", async () => {
         })
       }, factory),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -119,7 +117,6 @@ test("test inbound filename transformation", async () => {
         })
       }, factory),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

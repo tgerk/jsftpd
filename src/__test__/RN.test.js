@@ -14,8 +14,7 @@ const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -36,7 +35,6 @@ test("test RNFR message file does not exist", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(50021, localhost).response()).toBe(
@@ -83,7 +81,6 @@ test("test RNFR/RNTO message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(50021, localhost).response()).toBe(
@@ -163,7 +160,6 @@ test("test RNFR/RNTO message using handlers", async () => {
       fileRename,
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(50021, localhost).response()).toBe(
@@ -215,7 +211,6 @@ test("test RNFR/RNTO message using handlers failing", async () => {
       fileRename,
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(50021, localhost).response()).toBe(
@@ -256,7 +251,6 @@ test("test RNFR/RNTO message file already exists", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(50021, localhost).response()).toBe(

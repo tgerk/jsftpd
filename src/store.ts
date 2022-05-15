@@ -94,12 +94,11 @@ export default function localStoreFactoryInit(baseFolder: string) {
   return function localStoreFactory(
     user: Credential,
     client: Socket | TLSSocket,
-    options: StoreOptions = {}
+    { resolveFoldername, resolveFilename }: StoreOptions = {}
   ) {
     let currentFolder = "/"
 
-    const { resolveFoldername, resolveFilename } = options,
-      { basefolder: baseFolder = defaultBaseFolder } = user
+    const { basefolder: baseFolder = defaultBaseFolder } = user
     if (baseFolder != defaultBaseFolder && !existsSync(baseFolder)) {
       throw Object.assign(Error(`User's base folder must exist`), {
         code: Errors.ENOTDIR,
@@ -108,9 +107,9 @@ export default function localStoreFactoryInit(baseFolder: string) {
 
     function resolveFolder(folder: string): Promise<string> {
       folder =
-        folder.charAt(0) === "/"
+        folder?.charAt(0) === "/"
           ? path.join(baseFolder, folder)
-          : path.join(baseFolder, currentFolder, folder)
+          : path.join(baseFolder, currentFolder, folder ?? "")
       folder = resolveFoldername?.(folder) ?? folder
       return new Promise((resolve) => {
         if (folder.startsWith(baseFolder)) {
@@ -120,15 +119,15 @@ export default function localStoreFactoryInit(baseFolder: string) {
       })
     }
 
-    function resolveFile(file: string): Promise<string> {
-      file =
-        file.charAt(0) === "/"
-          ? path.join(baseFolder, file)
-          : path.join(baseFolder, currentFolder, file)
-      file = resolveFilename?.(file) ?? file
+    function resolveFile(filename: string): Promise<string> {
+      filename = resolveFilename?.(filename) ?? filename
+      const filepath =
+        filename.charAt(0) === "/"
+          ? path.join(baseFolder, filename)
+          : path.join(baseFolder, currentFolder, filename ?? "")
       return new Promise((resolve, reject) => {
-        if (file.startsWith(baseFolder)) {
-          resolve(file)
+        if (filename && filepath.startsWith(baseFolder)) {
+          resolve(filepath)
         }
         reject() // no jailbreak!
       })

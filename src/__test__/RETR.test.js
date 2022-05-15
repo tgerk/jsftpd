@@ -22,8 +22,7 @@ const cleanup = function () {
       dataServer.close()
       dataServer = null
     }
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -44,7 +43,6 @@ test("test RETR message not allowed", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -91,7 +89,6 @@ test("test RETR message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -155,7 +152,6 @@ test("test RETR message with ASCII", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -258,7 +254,6 @@ test("test RETR message with handler", async () => {
       fileStore,
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -343,7 +338,6 @@ test("test RETR message with handler fails", async () => {
       fileStore,
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -406,7 +400,6 @@ test("test RETR message no active or passive mode", async () => {
       },
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -444,7 +437,6 @@ test("test RETR over secure passive connection", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -519,7 +511,6 @@ test("test RETR over active secure connection", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

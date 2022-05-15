@@ -24,8 +24,7 @@ const cleanup = function () {
       dataServer.close()
       dataServer = null
     }
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -47,7 +46,6 @@ test("create ftpd instance without options created with default values", async (
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy()
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy()
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy() */
-  server.start()
   const handler = jest.fn()
   server.on("listen", handler)
 
@@ -74,7 +72,6 @@ test("connect to secure ftp server", async () => {
   server = createFtpServer({
     securePort: cmdPortTLS,
   })
-  server.start()
 
   // this is an SFTP connection, not FTP+startTLS
   const cmdSocket = new ExpectSocket(
@@ -92,7 +89,6 @@ test("ftp server can be started on non default ports", async () => {
   })
   // expect(server._opt.cnf.port).toBe(cmdPortTCP)
   // expect(server._opt.cnf.securePort).toBe(cmdPortTLS)
-  server.start()
   // expect(server._tcp.address().port).toBe(cmdPortTCP)
   // expect(server._tls.address().port).toBe(cmdPortTLS)
   const handler = jest.fn()
@@ -124,7 +120,6 @@ test("test unknown message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -150,7 +145,6 @@ test("test CLNT message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -176,7 +170,6 @@ test("test SYST message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -200,7 +193,6 @@ test("test FEAT message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -224,7 +216,6 @@ test("test PWD message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -250,7 +241,6 @@ test("test QUIT message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -274,7 +264,6 @@ test("test PBSZ message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -298,7 +287,6 @@ test("test TYPE message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -328,7 +316,6 @@ test("test OPTS message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -360,7 +347,6 @@ test("test PROT message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -398,7 +384,6 @@ test("test REST message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -429,7 +414,6 @@ test("test MKD message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -460,7 +444,6 @@ test("test MKD message cannot create folder without permission", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -488,7 +471,6 @@ test("test RMD message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -524,7 +506,6 @@ test("test RMD message cannot delete folder without permission", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -555,7 +536,6 @@ test("test CWD message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -606,7 +586,6 @@ test("test MFMT message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -675,7 +654,6 @@ test("test MFMT message with handler", async () => {
       },
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -708,7 +686,6 @@ test("test MFMT message file does not exist", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -755,7 +732,6 @@ test("test DELE message without permission", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -802,7 +778,6 @@ test("test DELE message relative path", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -852,7 +827,6 @@ test("test DELE message absolute path", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -898,7 +872,6 @@ test("test SIZE message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -943,7 +916,6 @@ test("test AUTH message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -978,7 +950,6 @@ test("test PORT message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -1030,7 +1001,6 @@ test("test EPRT message", async () => {
     },
   ]
   server = createFtpServer({ port: cmdPortTCP, user: users })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

@@ -22,8 +22,7 @@ const cleanup = function () {
       dataServer.close()
       dataServer = null
     }
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -43,7 +42,6 @@ test("test STOR message without permission", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -83,7 +81,6 @@ test("test STOR message", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -149,7 +146,6 @@ test("test passive data connection times out", async () => {
     minDataPort: dataPort,
     timeout: 3000,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -186,7 +182,6 @@ test("test STOR message with ASCII", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -253,7 +248,6 @@ test("test STOR message overwrite not allowed", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -338,7 +332,6 @@ test("test STOR message with handler", async () => {
       fileStore,
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -401,7 +394,6 @@ test("test STOR message with handler fails", async () => {
       fileStore,
     }),
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -446,7 +438,6 @@ test("test STOR over secure passive connection", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -504,7 +495,6 @@ test("test STOR over active secure connection", async () => {
     user: users,
     minDataPort: dataPort,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

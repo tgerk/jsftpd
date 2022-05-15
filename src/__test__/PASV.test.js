@@ -9,8 +9,7 @@ const localhost = "127.0.0.1"
 
 const cleanup = function () {
   if (server) {
-    server.stop()
-    server.cleanup()
+    server.close()
     server = null
   }
 }
@@ -30,7 +29,6 @@ test("test PASV message takes next free port", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 1,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -72,7 +70,6 @@ test("test PASV message fails port unavailable", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 0,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -103,7 +100,6 @@ test("test PASV message fails port range fails", async () => {
     minDataPort: 70000,
     maxConnections: 0,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -134,7 +130,6 @@ test("test EPSV message takes next free port", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 1,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -173,7 +168,6 @@ test("test EPSV message fails port unavailable", async () => {
     minDataPort: cmdPortTCP,
     maxConnections: 0,
   })
-  server.start()
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

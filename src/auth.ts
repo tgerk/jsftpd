@@ -1,7 +1,12 @@
 import { Socket } from "net"
-import { TLSSocket } from "tls"
+import { AbsolutePath, RelativePath } from "./store"
 
-import { AbsolutePath } from "./store"
+export enum LoginType {
+  None,
+  Anonymous,
+  Password,
+  NoPassword,
+}
 
 enum permissions {
   FileCreate = "FileCreate",
@@ -17,25 +22,19 @@ type AnonymousPermissions = {
   -readonly [k in keyof typeof permissions as `allowAnonymous${k &
     string}`]?: boolean
 }
+
 type UserPermissions = {
   -readonly [k in keyof typeof permissions as `allowUser${k &
     string}`]?: boolean
 }
-export type Permissions = {
-  -readonly [k in keyof typeof permissions as `allow${k & string}`]: boolean
-}
-
-export type Credential = {
-  username: string
-  basefolder?: AbsolutePath
-} & Permissions
-
+type UserBaseFolder = AbsolutePath | RelativePath | string
 type UserOptions = {
   username: string
   password?: string
   allowLoginWithoutPassword?: boolean
-  basefolder?: AbsolutePath
+  basefolder?: UserBaseFolder
 } & UserPermissions
+
 export type AuthOptions = {
   allowAnonymousLogin?: boolean
   username?: string
@@ -45,23 +44,23 @@ export type AuthOptions = {
 } & AnonymousPermissions &
   UserPermissions
 
-export enum LoginType {
-  None,
-  Anonymous,
-  Password,
-  NoPassword,
+export type Permissions = {
+  -readonly [k in keyof typeof permissions as `allow${k & string}`]: boolean
 }
 
-export type OnAuthHandler = (cred: Credential) => void
+export type Credential = {
+  username: string
+  basefolder?: UserBaseFolder
+} & Permissions
+
+export interface OnAuthHandler {
+  (cred: Credential): void
+}
 
 export interface AuthHandlers {
-  userLoginType(
-    client: Socket | TLSSocket,
-    user: string,
-    onAuth: OnAuthHandler
-  ): LoginType
+  userLoginType(client: Socket, user: string, onAuth: OnAuthHandler): LoginType
   userAuthenticate(
-    client: Socket | TLSSocket,
+    client: Socket,
     user: string,
     pass: string,
     onAuth: OnAuthHandler
@@ -76,44 +75,41 @@ export default function ({
   password: defaultPassword,
   allowLoginWithoutPassword,
   allowAnonymousLogin,
-  ...config
+  ...defaults
 }: AuthOptions): AuthHandlers {
   const leastPrivilege = Object.fromEntries(
     Object.keys(permissions).map((k) => [`allow${k}`, false])
   ) as Permissions
 
-  function getCredentialForAnon(password: string): Credential {
-    return {
-      ...leastPrivilege,
-      ...Object.fromEntries(
-        Object.entries({ ...config, username: `anon(${password})` })
-          .filter(([key]) => !key.startsWith("allowUser"))
-          .map(([key, value]) => [
-            key.replace(/^allowAnonymous/, "allow"),
-            value,
-          ])
-      ),
-    } as Credential
-  }
-
-  function getCredentialForUser({
-    password: _,
-    allowLoginWithoutPassword: __,
-    ...user
-  }: UserOptions): Credential {
-    return {
-      ...leastPrivilege,
-      ...Object.fromEntries(
-        Object.entries({ ...config, ...user })
-          .filter(([key]) => !key.startsWith("allowAnonymous"))
-          .map(([key, value]) => [key.replace(/^allowUser/, "allow"), value])
-      ),
-    } as Credential
-  }
+  const getCredentialForAnon = (password: string) =>
+      ({
+        ...leastPrivilege,
+        ...Object.fromEntries(
+          Object.entries({ ...defaults, username: `anon(${password})` })
+            .filter(([key]) => !key.startsWith("allowUser"))
+            .map(([key, value]) => [
+              key.replace(/^allowAnonymous/, "allow"),
+              value,
+            ])
+        ),
+      } as Credential),
+    getCredentialForUser = ({
+      password: _,
+      allowLoginWithoutPassword: __,
+      ...user
+    }: UserOptions) =>
+      ({
+        ...leastPrivilege,
+        ...Object.fromEntries(
+          Object.entries({ ...defaults, ...user })
+            .filter(([key]) => !key.startsWith("allowAnonymous"))
+            .map(([key, value]) => [key.replace(/^allowUser/, "allow"), value])
+        ),
+      } as Credential)
 
   return {
     userLoginType(
-      _client: Socket | TLSSocket,
+      client: Socket,
       username: string,
       onAuthenticated: (credential: Credential) => void
     ): LoginType {
@@ -143,7 +139,7 @@ export default function ({
     },
 
     userAuthenticate(
-      _client: Socket | TLSSocket,
+      client: Socket,
       username: string,
       password: string,
       onAuthenticated: (credential: Credential) => void

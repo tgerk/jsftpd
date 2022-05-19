@@ -37,8 +37,6 @@ import internalAuth, {
 } from "./auth"
 
 import localBackend, {
-  getBaseFolder as getLocalStoreBaseFolder,
-  cleanup as cleanupLocalStore,
   StoreFactory,
   Store,
   Stats,
@@ -140,7 +138,7 @@ export function createFtpServer({
         emitter.emit("listen", {
           protocol: "tcp",
           ...(this.address() as AddressInfo),
-          basefolder: getLocalStoreBaseFolder(),
+          basefolder: localStoreFactory.basefolder,
         })
       })
     }
@@ -158,7 +156,7 @@ export function createFtpServer({
           emitter.emit("listen", {
             protocol: "tls",
             ...(this.address() as AddressInfo),
-            basefolder: getLocalStoreBaseFolder(),
+            basefolder: localStoreFactory.basefolder,
           })
         })
       })
@@ -175,7 +173,7 @@ export function createFtpServer({
       tcpServer && tcpServer.close()
       tlsServer && tlsServer.close()
 
-      cleanupLocalStore()
+      localStoreFactory.cleanup?.()
     },
 
     reloadAuth(authOptions: AuthOptions) {

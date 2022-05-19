@@ -17,7 +17,6 @@ import {
 } from "net"
 import {
   SecureContextOptions,
-  Server as TlsServer,
   TLSSocket,
   createServer as createSecureServer,
   createSecureContext,
@@ -44,6 +43,7 @@ import localBackend, {
   Store,
   Stats,
   Errors as StoreErrors,
+  AbsolutePath,
 } from "./store"
 
 export type ComposableAuthHandlerFactory = (
@@ -61,7 +61,7 @@ export type ServerOptions = {
   timeout?: number
   dataTimeout?: number
   tls?: SecureContextOptions
-  basefolder?: string
+  basefolder?: AbsolutePath
   auth?: ComposableAuthHandlerFactory
   store?: ComposableStoreFactory
 } & AuthOptions
@@ -75,6 +75,7 @@ type ConnectionSource = Server & {
   nextConnection: () => Promise<Socket>
 }
 
+export default createFtpServer
 export function createFtpServer({
   server,
   port = 21,
@@ -184,7 +185,7 @@ export function createFtpServer({
     FtpSessionHandler,
   })
 
-  function FtpSessionHandler(cmdSocket: Socket | TLSSocket) {
+  function FtpSessionHandler(cmdSocket: Socket) {
     // setup client session
     let username = "nobody",
       authenticated = false,
@@ -1211,7 +1212,6 @@ export function createFtpServer({
     )
   }
 }
-export default createFtpServer
 
 // utilities
 function formatListing(format = "LIST") {

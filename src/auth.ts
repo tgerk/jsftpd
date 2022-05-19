@@ -1,6 +1,8 @@
 import { Socket } from "net"
 import { TLSSocket } from "tls"
 
+import { AbsolutePath } from "./store"
+
 enum permissions {
   FileCreate = "FileCreate",
   FileRetrieve = "FileRetrieve",
@@ -25,14 +27,14 @@ export type Permissions = {
 
 export type Credential = {
   username: string
-  basefolder?: string
+  basefolder?: AbsolutePath
 } & Permissions
 
 type UserOptions = {
   username: string
   password?: string
   allowLoginWithoutPassword?: boolean
-  basefolder?: string
+  basefolder?: AbsolutePath
 } & UserPermissions
 export type AuthOptions = {
   allowAnonymousLogin?: boolean

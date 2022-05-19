@@ -1,6 +1,5 @@
 import path from "path"
 import { Socket } from "net"
-import { TLSSocket } from "tls"
 import fs from "fs/promises"
 import {
   existsSync,
@@ -14,6 +13,8 @@ import { Readable, Writable } from "stream"
 
 import { Credential } from "./auth"
 
+export type AbsolutePath = `/${string}`
+export type RelativePath = string
 export type Stats = Partial<FsStats> & { name: string }
 
 export enum Errors {
@@ -28,42 +29,42 @@ export enum Errors {
 //  file and folder manipulating commands require context
 export interface Store {
   // control PWD state,implicit in other accessors/operations
-  getFolder(): string
-  setFolder(folder: string): Promise<string>
+  getFolder(): AbsolutePath
+  setFolder(folder: RelativePath): Promise<AbsolutePath>
 
   // operations on folders/buckets/nodes, arg is relative to PWD
-  folderDelete(folder: string): Promise<void>
-  folderCreate(folder: string): Promise<void>
-  folderList(folder?: string): Promise<Stats[]>
+  folderDelete(folder: RelativePath): Promise<void>
+  folderCreate(folder: RelativePath): Promise<void>
+  folderList(folder?: RelativePath): Promise<Stats[]>
 
   // operations on files/objects/leaves, arg is relative to PWD
-  fileDelete(file: string): Promise<void>
-  fileStats(file: string): Promise<Stats>
-  fileRetrieve(file: string, seek?: number): Promise<Readable>
+  fileDelete(file: RelativePath): Promise<void>
+  fileStats(file: RelativePath): Promise<Stats>
+  fileRetrieve(file: RelativePath, seek?: number): Promise<Readable>
   fileStore(
-    file: string,
+    file: RelativePath,
     allowReplace: boolean,
     seek?: number
   ): Promise<Writable>
   fileRename(
-    fromFile: string
-  ): Promise<((toFile: string) => Promise<void>) & { fromFile: string }>
-  fileSetTimes(file: string, mtime: Date, atime?: Date): Promise<void>
+    fromFile: RelativePath
+  ): Promise<((toFile: RelativePath) => Promise<void>) & { fromFile: RelativePath }>
+  fileSetTimes(file: RelativePath, mtime: Date, atime?: Date): Promise<void>
 }
 
 export type StoreOptions = {
-  resolveFoldername?: (x: string) => string
-  resolveFilename?: (x: string) => string
+  resolveFoldername?: (x: AbsolutePath) => AbsolutePath
+  resolveFilename?: (x: AbsolutePath) => AbsolutePath
 }
 
 export type StoreFactory = (
   user: Credential,
-  client: Socket | TLSSocket,
+  client: Socket,
   options?: StoreOptions
 ) => Store
 
 // module state
-let defaultBaseFolder = path.join(process.cwd(), "__ftproot__"),
+let defaultBaseFolder = path.join(process.cwd(), "__ftproot__") as AbsolutePath,
   cleanupBaseFolder: () => void
 
 // export accessor and cleanup util
@@ -75,7 +76,8 @@ export function cleanup() {
   cleanupBaseFolder?.()
 }
 
-export default function localStoreFactoryInit(baseFolder: string) {
+export default localStoreFactoryInit
+export function localStoreFactoryInit(baseFolder: AbsolutePath) {
   if (!baseFolder) {
     if (!existsSync(defaultBaseFolder)) {
       mkdirSync(defaultBaseFolder)
@@ -93,10 +95,10 @@ export default function localStoreFactoryInit(baseFolder: string) {
 
   return function localStoreFactory(
     user: Credential,
-    client: Socket | TLSSocket,
+    client: Socket,
     { resolveFoldername, resolveFilename }: StoreOptions = {}
   ) {
-    let currentFolder = "/"
+    let currentFolder: AbsolutePath = "/"
 
     const { basefolder: baseFolder = defaultBaseFolder } = user
     if (baseFolder != defaultBaseFolder && !existsSync(baseFolder)) {
@@ -105,90 +107,78 @@ export default function localStoreFactoryInit(baseFolder: string) {
       })
     }
 
-    function resolveFolder(folder: string): Promise<string> {
-      folder =
-        folder?.charAt(0) === "/"
-          ? path.join(baseFolder, folder)
-          : path.join(baseFolder, currentFolder, folder ?? "")
-      folder = resolveFoldername?.(folder) ?? folder
-      return new Promise((resolve) => {
-        if (folder.startsWith(baseFolder)) {
-          resolve(folder)
-        }
-        resolve(baseFolder) // no jailbreak!
-      })
-    }
-
-    function resolveFile(filename: string): Promise<string> {
-      filename = resolveFilename?.(filename) ?? filename
-      const filepath =
-        filename.charAt(0) === "/"
-          ? path.join(baseFolder, filename)
-          : path.join(baseFolder, currentFolder, filename ?? "")
-      return new Promise((resolve, reject) => {
-        if (filename && filepath.startsWith(baseFolder)) {
-          resolve(filepath)
-        }
-        reject() // no jailbreak!
-      })
-    }
-
-    function folderExists(folder: string): Promise<boolean> {
-      // advance status check is inconclusive, check error condition later
-      return fs.stat(folder).then((fstat) => {
-        if (fstat.isDirectory()) {
-          return true
-        }
-
-        throw Object.assign(new Error("not directory"), {
-          code: Errors.ENOTDIR,
+    const absJoin = (pathname: RelativePath): AbsolutePath =>
+        path.isAbsolute(pathname ?? "")
+          ? (path.join(baseFolder, pathname) as AbsolutePath)
+          : (path.join(
+              baseFolder,
+              currentFolder,
+              pathname ?? ""
+            ) as AbsolutePath),
+      resolveFolder = (folder: RelativePath): Promise<AbsolutePath> =>
+        new Promise((resolve) => {
+          let pathname = absJoin(folder)
+          pathname = resolveFoldername?.(pathname) ?? pathname
+          if (!pathname.startsWith(baseFolder)) {
+            resolve(baseFolder) // no jailbreak!
+          }
+          resolve(pathname)
+        }),
+      resolveFile = (filename: RelativePath): Promise<AbsolutePath> =>
+        new Promise((resolve, reject) => {
+          let pathname = absJoin(filename)
+          pathname = resolveFilename?.(pathname) ?? pathname
+          if (!pathname.startsWith(baseFolder)) {
+            reject() // no jailbreak!
+          }
+          resolve(pathname)
+        }),
+      folderExists = (folder: RelativePath): Promise<void> =>
+        fs.stat(folder).then((fstat) => {
+          if (!fstat.isDirectory()) {
+            throw Object.assign(new Error("not directory"), {
+              code: Errors.ENOTDIR,
+            })
+          }
+        }),
+      fileExists = (file: RelativePath): Promise<void> =>
+        fs.stat(file).then((fstat) => {
+          if (!fstat.isFile()) {
+            throw Object.assign(new Error("not file"), {
+              code: Errors.ENOTFILE,
+            })
+          }
         })
-      })
-    }
-
-    function fileExists(file: string): Promise<boolean> {
-      // input checked relative to current folder
-      // advance status check is inconclusive, check error condition later
-      return fs.stat(file).then((fstat) => {
-        if (fstat.isFile()) {
-          return true
-        }
-
-        throw Object.assign(new Error("not file"), {
-          code: Errors.ENOTFILE,
-        })
-      })
-    }
 
     return {
-      setFolder(folder: string): Promise<string> {
+      getFolder(): AbsolutePath {
+        return currentFolder
+      },
+
+      setFolder(folder: RelativePath) {
         return resolveFolder(folder).then((folder) =>
           folderExists(folder).then(
-            () => (currentFolder = "/" + path.relative(baseFolder, folder))
+            () => (currentFolder = "/" + path.relative(baseFolder, folder) as AbsolutePath)
           )
         )
       },
 
-      getFolder(): string {
-        return currentFolder
-      },
-
-      folderDelete(folder: string): Promise<void> {
+      folderDelete(folder: RelativePath) {
+        // advance existence check is inconclusive, should skip & check error condition later
         // should not allow removing any path containing currentFolder?
-        // try to remove without checking existence, let it raise error?
-        return resolveFolder(folder)
-          .then((folder) => folderExists(folder))
-          .then(() =>
+        return resolveFolder(folder).then((folder) =>
+          folderExists(folder).then(() =>
             fs.rm(folder, {
               force: true,
               recursive: true,
             })
           )
+        )
       },
 
-      folderCreate(folder: string): Promise<void> {
+      folderCreate(folder: RelativePath) {
+        // advance existence check is inconclusive, should skip & check error condition later
         return resolveFolder(folder).then((folder) =>
-          // try to create without checking, let it raise error?
           folderExists(folder).then(
             () => {
               throw Object.assign(Error(folder), {
@@ -211,7 +201,7 @@ export default function localStoreFactoryInit(baseFolder: string) {
         )
       },
 
-      folderList(folder: string): Promise<Stats[]> {
+      folderList(folder: RelativePath) {
         return resolveFolder(folder).then((folder) =>
           fs
             .readdir(folder, {
@@ -231,17 +221,17 @@ export default function localStoreFactoryInit(baseFolder: string) {
         )
       },
 
-      fileDelete(file: string): Promise<void> {
+      fileDelete(file: RelativePath) {
         return resolveFile(file).then((file) => fs.unlink(file))
       },
 
-      fileStats(file: string): Promise<Stats> {
+      fileStats(file: RelativePath) {
         return resolveFile(file)
           .then((file) => fs.stat(file))
           .then((fstat) => Object.assign(fstat, { name: file }))
       },
 
-      fileRetrieve(file: string, seek?: number): Promise<Readable> {
+      fileRetrieve(file: RelativePath, seek?: number) {
         return resolveFile(file).then((file) =>
           createReadStream(file, {
             start: seek,
@@ -256,7 +246,7 @@ export default function localStoreFactoryInit(baseFolder: string) {
         )
       },
 
-      fileStore(file: string, allowReplace: boolean, seek = 0) {
+      fileStore(file: RelativePath, allowReplace: boolean, seek = 0) {
         const flags = (() => {
           if (seek) {
             if (!allowReplace) {
@@ -278,16 +268,16 @@ export default function localStoreFactoryInit(baseFolder: string) {
         )
       },
 
-      fileRename(fromFile: string) {
-        // TODO: try to rename without checking, let it raise error
+      fileRename(fromFile: RelativePath) {
+        // advance existence check is inconclusive, should skip & check error condition later
         return resolveFile(fromFile).then((fromFile) =>
           fileExists(fromFile).then(async () => {
             return Object.assign(
-              function fileRenameTo(toFile: string) {
+              function fileRenameTo(toFile: RelativePath) {
                 return resolveFile(toFile).then((toFile) =>
                   fileExists(toFile).then(
                     () => {
-                      // but what if allowed to replace?
+                      // what if allowed to replace/overwrite?
                       throw Object.assign(Error(toFile), {
                         code: Errors.EEXIST,
                       })
@@ -302,7 +292,7 @@ export default function localStoreFactoryInit(baseFolder: string) {
         )
       },
 
-      fileSetTimes(file: string, mtime: Date, atime: Date): Promise<void> {
+      fileSetTimes(file: RelativePath, mtime: Date, atime: Date) {
         return resolveFile(file).then((file) =>
           fs.utimes(file, atime ?? mtime, mtime)
         )

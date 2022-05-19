@@ -8,20 +8,12 @@
 import path from "path"
 import { Socket } from "net"
 import { Credential } from "../auth"
-import {
-  StoreFactory,
-  Store,
-  StoreOptions,
-  Path
-} from "../store"
+import { StoreFactory, Store, StoreOptions, Path } from "../store"
 
 // present names in on-disk ####.nc format as DNC-style O####
 function transformOutbound(file: Path): typeof file {
   const { dir, base, name } = path.parse(file)
-  return path.join(
-    dir,
-    base.match(/^\d+.nc$/i) ? `O${name}` : base
-  ) as Path
+  return path.join(dir, base.match(/^\d+.nc$/i) ? `O${name}` : base) as Path
 }
 
 // resolve names from DNC-style O#### to on-disk ####.nc format

@@ -61,7 +61,7 @@ export type ServerOptions = {
   tls?: SecureContextOptions
   basefolder?: AbsolutePath
   auth?: ComposableAuthHandlerFactory
-  store?: ComposableStoreFactory
+  store?: ComposableStoreFactory | ComposableStoreFactory[]
 } & AuthOptions
 
 interface FTPCommandTable {
@@ -96,8 +96,15 @@ export function createFtpServer({
   const authFactory = auth?.(internalAuth) ?? internalAuth
   let { userLoginType, userAuthenticate } = authFactory(authOptions)
 
-  const localStoreFactory = localBackend(basefolder),
-    storeFactory = store?.(localStoreFactory) ?? localStoreFactory
+  const localStoreFactory = localBackend(basefolder)
+  let storeFactory: StoreFactory
+  if (store instanceof Array) {
+    storeFactory = store.reduceRight((y, f) => f(y), localStoreFactory)
+  } else if (store) {
+    storeFactory = store(localStoreFactory)
+  } else {
+    storeFactory = localStoreFactory
+  }
 
   // need to always prepare TLS certs and secure context,
   //  because we implement FTPS (via AUTH TLS, like STARTTLS),

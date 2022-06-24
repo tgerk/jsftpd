@@ -1,4 +1,8 @@
-import path from "path"
+import {
+  join as joinPath,
+  relative as relativePath,
+  resolve as resolvePath,
+} from "path"
 import { Socket } from "net"
 import fs from "fs/promises"
 import {
@@ -66,29 +70,23 @@ export type StoreFactory = (
   options?: StoreOptions
 ) => Store
 
-// module state
-const moduleBaseFolder = path.join(
-  process.cwd() as AbsolutePath,
-  "__ftproot__"
-) as AbsolutePath
-
 export default localStoreFactoryInit
 export function localStoreFactoryInit(defaultBaseFolder: Path) {
   let cleanup: () => void
-
-  if (!defaultBaseFolder) {
-    if (!existsSync(moduleBaseFolder)) {
-      mkdirSync(moduleBaseFolder)
+  if (defaultBaseFolder) {
+    if (!existsSync(defaultBaseFolder)) {
+      throw Object.assign(Error(`Base folder must exist`), {
+        code: Errors.ENOTDIR, value: defaultBaseFolder
+      })
+    }
+  } else {
+    defaultBaseFolder = resolvePath("__ftproot__") as AbsolutePath
+    if (!existsSync(defaultBaseFolder)) {
+      mkdirSync(defaultBaseFolder)
       cleanup = function () {
-        rmSync(moduleBaseFolder, { force: true, recursive: true })
+        rmSync(defaultBaseFolder, { force: true, recursive: true })
       }
     }
-
-    defaultBaseFolder = moduleBaseFolder
-  } else if (!existsSync(defaultBaseFolder)) {
-    throw Object.assign(Error(`Base folder must exist`), {
-      code: Errors.ENOTDIR,
-    })
   }
 
   return Object.assign(
@@ -97,37 +95,36 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
       client: Socket,
       { resolveFoldername, resolveFilename }: StoreOptions = {}
     ) {
-      if (!baseFolder) {
+      if (baseFolder) {
+        baseFolder = resolvePath(defaultBaseFolder, baseFolder)
+        if (!existsSync(baseFolder)) {
+          throw Object.assign(Error(`User's base folder must exist`), {
+            code: Errors.ENOTDIR, value: baseFolder
+          })
+        }
+      } else {
         baseFolder = defaultBaseFolder
-      } else if (!existsSync(baseFolder)) {
-        throw Object.assign(Error(`User's base folder must exist`), {
-          code: Errors.ENOTDIR,
-        })
       }
 
       let currentFolder: AbsolutePath = "/"
 
       const resolveFolder = (folder: Path = ""): Promise<typeof baseFolder> =>
           new Promise((resolve) => {
-            folder = path.isAbsolute(folder)
-              ? path.join(baseFolder, folder)
-              : path.join(baseFolder, currentFolder, folder)
+            folder = joinPath(baseFolder, resolvePath(currentFolder, folder))
             folder = resolveFoldername?.(folder) ?? folder
-            if (!folder.startsWith(baseFolder)) {
-              resolve(baseFolder) // no jailbreak!
+            if (folder.startsWith(baseFolder)) {
+              resolve(folder)
             }
-            resolve(folder)
+            resolve(baseFolder) // no jailbreak!
           }),
         resolveFile = (file: Path = ""): Promise<typeof baseFolder> =>
           new Promise((resolve, reject) => {
-            file = path.isAbsolute(file)
-              ? path.join(baseFolder, file)
-              : path.join(baseFolder, currentFolder, file)
+            file = joinPath(baseFolder, resolvePath(currentFolder, file))
             file = resolveFilename?.(file) ?? file
-            if (!file.startsWith(baseFolder)) {
-              reject() // no jailbreak!
+            if (file.startsWith(baseFolder)) {
+              resolve(file)
             }
-            resolve(file)
+            reject() // no jailbreak!
           }),
         folderExists = (folder: Path): Promise<void> =>
           fs.stat(folder).then((fstat) => {
@@ -155,9 +152,9 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
           return resolveFolder(folder).then((folder) =>
             folderExists(folder).then(
               () =>
-                (currentFolder = path.join(
+                (currentFolder = joinPath(
                   "/",
-                  path.relative(baseFolder, folder)
+                  relativePath(baseFolder, folder)
                 ) as AbsolutePath)
             )
           )
@@ -213,7 +210,7 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
                     .filter((dirent) => dirent.isDirectory() || dirent.isFile())
                     .map(({ name }) =>
                       fs
-                        .stat(path.join(folder, name))
+                        .stat(joinPath(folder, name))
                         .then((fstat) => Object.assign(fstat, { name }))
                     )
                 )

@@ -76,7 +76,8 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
   if (defaultBaseFolder) {
     if (!existsSync(defaultBaseFolder)) {
       throw Object.assign(Error(`Base folder must exist`), {
-        code: Errors.ENOTDIR, value: defaultBaseFolder
+        code: Errors.ENOTDIR,
+        value: defaultBaseFolder,
       })
     }
   } else {
@@ -99,7 +100,8 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
         baseFolder = resolvePath(defaultBaseFolder, baseFolder)
         if (!existsSync(baseFolder)) {
           throw Object.assign(Error(`User's base folder must exist`), {
-            code: Errors.ENOTDIR, value: baseFolder
+            code: Errors.ENOTDIR,
+            value: baseFolder,
           })
         }
       } else {

@@ -71,78 +71,63 @@ export type StoreFactory = (
 ) => Store
 
 export default localStoreFactoryInit
-export function localStoreFactoryInit(defaultBaseFolder: Path) {
+export function localStoreFactoryInit(basefolder?: Path) {
   let cleanup: () => void
-  if (defaultBaseFolder) {
-    if (!existsSync(defaultBaseFolder)) {
+  if (basefolder) {
+    if (!existsSync(basefolder)) {
       throw Object.assign(Error(`Base folder must exist`), {
         code: Errors.ENOTDIR,
-        value: defaultBaseFolder,
+        value: basefolder,
       })
     }
   } else {
-    defaultBaseFolder = resolvePath("__ftproot__") as AbsolutePath
-    if (!existsSync(defaultBaseFolder)) {
-      mkdirSync(defaultBaseFolder)
+    basefolder = resolvePath("__ftproot__") as AbsolutePath
+    if (!existsSync(basefolder)) {
+      mkdirSync(basefolder)
       cleanup = function () {
-        rmSync(defaultBaseFolder, { force: true, recursive: true })
+        rmSync(basefolder, { force: true, recursive: true })
       }
     }
   }
 
   return Object.assign(
     function localStoreFactory(
-      { basefolder: baseFolder }: Credential,
+      user: Credential,
       client: Socket,
-      { resolveFoldername, resolveFilename }: StoreOptions = {}
-    ) {
-      if (baseFolder) {
-        baseFolder = resolvePath(defaultBaseFolder, baseFolder)
-        if (!existsSync(baseFolder)) {
+      options: StoreOptions = {}
+    ): Store {
+      const rootFolder = resolvePath(basefolder, user.basefolder ?? "") as AbsolutePath,
+        { resolveFoldername, resolveFilename } = options
+      if (user.basefolder) {
+        if (!existsSync(rootFolder)) {
           throw Object.assign(Error(`User's base folder must exist`), {
             code: Errors.ENOTDIR,
-            value: baseFolder,
+            value: rootFolder,
           })
         }
-      } else {
-        baseFolder = defaultBaseFolder
       }
 
       let currentFolder: AbsolutePath = "/"
 
-      const resolveFolder = (folder: Path = ""): Promise<typeof baseFolder> =>
+      const resolveFolder = (folder: Path = ""): Promise<AbsolutePath> =>
           new Promise((resolve) => {
-            folder = joinPath(baseFolder, resolvePath(currentFolder, folder))
+            folder = joinPath(rootFolder, resolvePath(currentFolder, folder))
             folder = resolveFoldername?.(folder) ?? folder
-            if (folder.startsWith(baseFolder)) {
-              resolve(folder)
+            if (!folder.startsWith(rootFolder)) {
+              resolve(rootFolder) // no jailbreak!
             }
-            resolve(baseFolder) // no jailbreak!
+
+            resolve(folder as AbsolutePath)
           }),
-        resolveFile = (file: Path = ""): Promise<typeof baseFolder> =>
+        resolveFile = (file: Path = ""): Promise<AbsolutePath> =>
           new Promise((resolve, reject) => {
-            file = joinPath(baseFolder, resolvePath(currentFolder, file))
+            file = joinPath(rootFolder, resolvePath(currentFolder, file))
             file = resolveFilename?.(file) ?? file
-            if (file.startsWith(baseFolder)) {
-              resolve(file)
+            if (!file.startsWith(rootFolder)) {
+              reject() // no jailbreak!
             }
-            reject() // no jailbreak!
-          }),
-        folderExists = (folder: Path): Promise<void> =>
-          fs.stat(folder).then((fstat) => {
-            if (!fstat.isDirectory()) {
-              throw Object.assign(new Error("not directory"), {
-                code: Errors.ENOTDIR,
-              })
-            }
-          }),
-        fileExists = (file: Path): Promise<void> =>
-          fs.stat(file).then((fstat) => {
-            if (!fstat.isFile()) {
-              throw Object.assign(new Error("not file"), {
-                code: Errors.ENOTFILE,
-              })
-            }
+
+            resolve(file as AbsolutePath)
           })
 
       return {
@@ -152,51 +137,46 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
 
         setFolder(folder: Path) {
           return resolveFolder(folder).then((folder) =>
-            folderExists(folder).then(
-              () =>
-                (currentFolder = joinPath(
+            fs
+              .stat(folder)
+              .then((fstat) => {
+                if (!fstat.isDirectory()) {
+                  throw Object.assign(new Error("not directory"), {
+                    code: Errors.ENOTDIR,
+                  })
+                }
+                
+                return (currentFolder = joinPath(
                   "/",
-                  relativePath(baseFolder, folder)
+                  relativePath(rootFolder, folder)
                 ) as AbsolutePath)
-            )
+              })
           )
         },
 
         folderDelete(folder: Path) {
-          // advance existence check is inconclusive, should skip & check error condition later
           // should not allow removing any path containing currentFolder?
           return resolveFolder(folder).then((folder) =>
-            folderExists(folder).then(() =>
-              fs.rm(folder, {
-                force: true,
-                recursive: true,
-              })
-            )
+            fs.rm(folder, {
+              force: true,
+              recursive: true,
+            })
           )
         },
 
         folderCreate(folder: Path) {
-          // advance existence check is inconclusive, should skip & check error condition later
           return resolveFolder(folder).then((folder) =>
-            folderExists(folder).then(
-              () => {
-                throw Object.assign(Error(folder), {
-                  code: Errors.EEXIST,
-                })
-              },
-              () =>
-                fs
-                  .mkdir(folder, {
-                    recursive: true,
+            fs
+              .mkdir(folder, {
+                recursive: true,
+              })
+              .then((folder) => {
+                if (!folder) {
+                  throw Object.assign(Error(folder), {
+                    code: Errors.EEXIST,
                   })
-                  .then((folder) => {
-                    if (!folder) {
-                      throw Object.assign(Error(folder), {
-                        code: Errors.EEXIST,
-                      })
-                    }
-                  })
-            )
+                }
+              })
           )
         },
 
@@ -268,6 +248,15 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
         },
 
         fileRename(fromFile: Path) {
+          const fileExists = (file: Path): Promise<void> =>
+          fs.stat(file).then((fstat) => {
+            if (!fstat.isFile()) {
+              throw Object.assign(new Error("not file"), {
+                code: Errors.ENOTFILE,
+              })
+            }
+          })
+
           // advance existence check is inconclusive, should skip & check error condition later
           return resolveFile(fromFile).then((fromFile) =>
             fileExists(fromFile).then(async () => {
@@ -299,7 +288,7 @@ export function localStoreFactoryInit(defaultBaseFolder: Path) {
       }
     },
     {
-      basefolder: defaultBaseFolder,
+      basefolder,
       cleanup,
     }
   )

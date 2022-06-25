@@ -463,7 +463,7 @@ test("test RMD message", async () => {
   )
 
   expect(await cmdSocket.command("RMD /pete").response()).toBe(
-    "550 Folder not found"
+    "250 Folder deleted successfully"
   )
 
   expect(await cmdSocket.command("RMD john").response()).toBe(

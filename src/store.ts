@@ -96,7 +96,10 @@ export function localStoreFactoryInit(basefolder?: Path) {
       client: Socket,
       options: StoreOptions = {}
     ): Store {
-      const rootFolder = resolvePath(basefolder, user.basefolder ?? "") as AbsolutePath,
+      const rootFolder = resolvePath(
+          basefolder,
+          user.basefolder ?? ""
+        ) as AbsolutePath,
         { resolveFoldername, resolveFilename } = options
       if (user.basefolder) {
         if (!existsSync(rootFolder)) {
@@ -137,20 +140,18 @@ export function localStoreFactoryInit(basefolder?: Path) {
 
         setFolder(folder: Path) {
           return resolveFolder(folder).then((folder) =>
-            fs
-              .stat(folder)
-              .then((fstat) => {
-                if (!fstat.isDirectory()) {
-                  throw Object.assign(new Error("not directory"), {
-                    code: Errors.ENOTDIR,
-                  })
-                }
-                
-                return (currentFolder = joinPath(
-                  "/",
-                  relativePath(rootFolder, folder)
-                ) as AbsolutePath)
-              })
+            fs.stat(folder).then((fstat) => {
+              if (!fstat.isDirectory()) {
+                throw Object.assign(new Error("not directory"), {
+                  code: Errors.ENOTDIR,
+                })
+              }
+
+              return (currentFolder = joinPath(
+                "/",
+                relativePath(rootFolder, folder)
+              ) as AbsolutePath)
+            })
           )
         },
 
@@ -249,13 +250,13 @@ export function localStoreFactoryInit(basefolder?: Path) {
 
         fileRename(fromFile: Path) {
           const fileExists = (file: Path): Promise<void> =>
-          fs.stat(file).then((fstat) => {
-            if (!fstat.isFile()) {
-              throw Object.assign(new Error("not file"), {
-                code: Errors.ENOTFILE,
-              })
-            }
-          })
+            fs.stat(file).then((fstat) => {
+              if (!fstat.isFile()) {
+                throw Object.assign(new Error("not file"), {
+                  code: Errors.ENOTFILE,
+                })
+              }
+            })
 
           // advance existence check is inconclusive, should skip & check error condition later
           return resolveFile(fromFile).then((fromFile) =>

@@ -31,6 +31,11 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+}
+
 test("create ftpd instance without options created with default values", async () => {
   server = createFtpServer()
   /* Bad checks:  "show, don't tell" principle means to test the effects & behavior of a server created with all defaults
@@ -113,13 +118,11 @@ test("ftp server fails when basefolder does not exist", async () => {
 })
 
 test("test unknown message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -138,13 +141,11 @@ test("test unknown message", async () => {
 })
 
 test("test CLNT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -163,13 +164,11 @@ test("test CLNT message", async () => {
 })
 
 test("test SYST message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -186,13 +185,11 @@ test("test SYST message", async () => {
 })
 
 test("test FEAT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -209,13 +206,11 @@ test("test FEAT message", async () => {
 })
 
 test("test PWD message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -234,13 +229,11 @@ test("test PWD message", async () => {
 })
 
 test("test QUIT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -257,13 +250,11 @@ test("test QUIT message", async () => {
 })
 
 test("test PBSZ message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -280,13 +271,11 @@ test("test PBSZ message", async () => {
 })
 
 test("test TYPE message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -309,13 +298,11 @@ test("test TYPE message", async () => {
 })
 
 test("test OPTS message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -340,13 +327,11 @@ test("test OPTS message", async () => {
 })
 
 test("test PROT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -377,13 +362,11 @@ test("test PROT message", async () => {
 })
 
 test("test REST message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -406,14 +389,12 @@ test("test REST message", async () => {
 })
 
 test("test MKD message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -436,14 +417,12 @@ test("test MKD message", async () => {
 })
 
 test("test MKD message cannot create folder without permission", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: false,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: false,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -462,15 +441,13 @@ test("test MKD message cannot create folder without permission", async () => {
 })
 
 test("test RMD message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-      allowUserFolderDelete: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
+    allowUserFolderDelete: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -497,15 +474,13 @@ test("test RMD message", async () => {
 })
 
 test("test RMD message cannot delete folder without permission", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-      allowUserFolderDelete: false,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
+    allowUserFolderDelete: false,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -528,14 +503,12 @@ test("test RMD message cannot delete folder without permission", async () => {
 })
 
 test("test CWD message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -574,17 +547,12 @@ test("test CWD message", async () => {
 })
 
 test("test MFMT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -636,15 +604,10 @@ test("test MFMT message", async () => {
 })
 
 test("test MFMT message with handler", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(true)
@@ -672,19 +635,14 @@ test("test MFMT message with handler", async () => {
 })
 
 test("test MFMT message file does not exist", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileOverwrite: true,
-      allowUserFileRename: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
+    allowUserFileOverwrite: true,
+    allowUserFileRename: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -719,18 +677,13 @@ test("test MFMT message file does not exist", async () => {
 })
 
 test("test DELE message without permission", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileDelete: false,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
+    allowUserFileDelete: false,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -765,18 +718,13 @@ test("test DELE message without permission", async () => {
 })
 
 test("test DELE message relative path", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileDelete: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
+    allowUserFileDelete: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -814,18 +762,13 @@ test("test DELE message relative path", async () => {
 })
 
 test("test DELE message absolute path", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileDelete: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
+    allowUserFileDelete: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -860,17 +803,12 @@ test("test DELE message absolute path", async () => {
 })
 
 test("test SIZE message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -909,13 +847,11 @@ test("test SIZE message", async () => {
 })
 
 test("test AUTH message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -942,14 +878,12 @@ test("test AUTH message", async () => {
 // TODO: test AUTH TLS _after_ login (should reset session)
 
 test("test PORT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -993,14 +927,12 @@ test("test PORT message", async () => {
 })
 
 test("test EPRT message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [{ ...john }],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

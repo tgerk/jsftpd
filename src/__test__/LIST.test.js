@@ -28,18 +28,19 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+  allowUserFolderCreate: true,
+  allowUserileCreate: true,
+}
+
 test("test LIST message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -63,8 +64,9 @@ test("test LIST message", async () => {
   await cmdSocket.command("LIST")
 
   let dataSocket = new ExpectSocket()
-  const data = await dataSocket.connect(dataPort, localhost).receive()
-  expect(data).toMatch("dr--r--r-- 1 ? ?")
+  expect(await dataSocket.connect(dataPort, localhost).receive()).toMatch(
+    "dr--r--r-- 1 ? ?"
+  )
 
   const response = await cmdSocket.response()
   expect(response).toMatch("150 Awaiting passive connection")
@@ -74,17 +76,11 @@ test("test LIST message", async () => {
 })
 
 test("test MLSD message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -119,17 +115,11 @@ test("test MLSD message", async () => {
 })
 
 test("test MLSD message over passive secure connection", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -175,17 +165,11 @@ test("test MLSD message over passive secure connection", async () => {
 })
 
 test("test MLSD message over secure active connection", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -232,18 +216,12 @@ test("test MLSD message over secure active connection", async () => {
 })
 
 test("test MLSD message with handler", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
   const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({ folderList }),
   })
 

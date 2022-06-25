@@ -16,17 +16,17 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+}
+
 test("test PASV message takes next free port", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
     maxConnections: 1,
   })
 
@@ -49,8 +49,7 @@ test("test PASV message takes next free port", async () => {
   )
 
   let dataSocket = new ExpectSocket()
-  const data = await dataSocket.connect(cmdPortTCP + 1, localhost).receive()
-  expect(data).toBe("")
+  expect(await dataSocket.connect(cmdPortTCP + 1, localhost).receive()).toBe("")
 
   expect(await cmdSocket.response()).toMatch('226 Successfully transferred "/"')
 
@@ -58,16 +57,11 @@ test("test PASV message takes next free port", async () => {
 })
 
 test("test PASV message fails port unavailable", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
     maxConnections: 0,
   })
 
@@ -88,16 +82,11 @@ test("test PASV message fails port unavailable", async () => {
 })
 
 test("test PASV message fails port range fails", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: 70000,
+    user: [john],
+    allowLoginWithoutPassword: true,
     maxConnections: 0,
   })
 
@@ -118,16 +107,11 @@ test("test PASV message fails port range fails", async () => {
 })
 
 test("test EPSV message takes next free port", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
     maxConnections: 1,
   })
 
@@ -156,16 +140,11 @@ test("test EPSV message takes next free port", async () => {
 })
 
 test("test EPSV message fails port unavailable", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
     maxConnections: 0,
   })
 

@@ -148,17 +148,20 @@ test("login with user settings", async () => {
 })
 
 test("login with user settings without password allowed", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-    {
-      username: "michael",
-      allowLoginWithoutPassword: true,
-    },
-  ]
-  server = createFtpServer({ port: cmdPortTCP, user: users })
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [
+      {
+        username: "john",
+        allowLoginWithoutPassword: true,
+      },
+      {
+        username: "michael",
+        allowLoginWithoutPassword: true,
+      },
+    ],
+    allowLoginWithoutPassword: true,
+  })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(

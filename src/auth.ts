@@ -32,6 +32,7 @@ type UserOptions = {
   username: string
   password?: string
   allowLoginWithoutPassword?: boolean
+  allowFromAddrWithoutPassword?: string
   basefolder?: UserBaseFolder
 } & UserPermissions
 
@@ -40,6 +41,7 @@ export type AuthOptions = {
   username?: string
   password?: string
   allowLoginWithoutPassword?: boolean
+  allowFromAddrWithoutPassword?: boolean
   user?: UserOptions[] // why iterate an array when could map {[username]: credential}
 } & AnonymousPermissions &
   UserPermissions
@@ -73,17 +75,21 @@ export default function ({
   user: users,
   username: defaultUsername,
   password: defaultPassword,
+  allowFromAddrWithoutPassword,
   allowLoginWithoutPassword,
   allowAnonymousLogin,
   ...defaults
 }: AuthOptions): AuthHandlers {
-  const leastPrivilege = Object.fromEntries(
-    Object.keys(permissions).map((k) => [`allow${k}`, false])
+  const defaultPrivilege = Object.fromEntries(
+    Object.keys(permissions).map((k) => [
+      `allow${k}`,
+      defaults[`allow${k}` as keyof typeof defaults] ?? false,
+    ])
   ) as Permissions
 
   const getCredentialForAnon = (password: string) =>
       ({
-        ...leastPrivilege,
+        ...defaultPrivilege,
         ...Object.fromEntries(
           Object.entries({ ...defaults, username: `anon(${password})` })
             .filter(([key]) => !key.startsWith("allowUser"))
@@ -96,10 +102,11 @@ export default function ({
     getCredentialForUser = ({
       password: _,
       allowLoginWithoutPassword: __,
+      allowFromAddrWithoutPassword: ___,
       ...user
     }: UserOptions) =>
       ({
-        ...leastPrivilege,
+        ...defaultPrivilege,
         ...Object.fromEntries(
           Object.entries({ ...defaults, ...user })
             .filter(([key]) => !key.startsWith("allowAnonymous"))
@@ -117,24 +124,35 @@ export default function ({
         if (allowAnonymousLogin) {
           return LoginType.Anonymous
         }
-      } else if (users?.length > 0) {
-        const user = users.find(({ username: user }) => user === username)
+
+        return LoginType.None
+      }
+
+      if (users?.length > 0) {
+        const user = users.find((user) => user.username === username)
         if (user) {
-          if (user.allowLoginWithoutPassword) {
+          if (
+            (allowLoginWithoutPassword && user.allowLoginWithoutPassword) ||
+            (allowFromAddrWithoutPassword &&
+              client.remoteAddress.match(user.allowFromAddrWithoutPassword))
+          ) {
             onAuthenticated(getCredentialForUser(user))
             return LoginType.NoPassword
-          } else {
-            return LoginType.Password
           }
+
+          return LoginType.Password
         }
+
+        return LoginType.None
       } else if (username === defaultUsername) {
         if (allowLoginWithoutPassword === true) {
           onAuthenticated(getCredentialForUser({ username }))
           return LoginType.NoPassword
-        } else {
-          return LoginType.Password
         }
+
+        return LoginType.Password
       }
+
       return LoginType.None
     },
 
@@ -149,27 +167,23 @@ export default function ({
           onAuthenticated(getCredentialForAnon(password))
           return LoginType.Anonymous
         }
-      } else if (users?.length > 0) {
-        const user = users.find(
-          ({ username: user, password: pass, allowLoginWithoutPassword }) =>
-            user === username &&
-            (pass === password || allowLoginWithoutPassword)
-        )
-        if (user) {
-          onAuthenticated(getCredentialForUser(user))
-          return user.allowLoginWithoutPassword
-            ? LoginType.NoPassword
-            : LoginType.Password
-        }
-      } else if (
-        username === defaultUsername &&
-        (password === defaultPassword || allowLoginWithoutPassword)
-      ) {
-        onAuthenticated(getCredentialForUser({ username }))
-        return allowLoginWithoutPassword
-          ? LoginType.NoPassword
-          : LoginType.Password
+
+        return LoginType.None
       }
+
+      if (users?.length > 0) {
+        const user = users.find((user) => user.username === username)
+        if (user && user.password === password) {
+          onAuthenticated(getCredentialForUser(user))
+          return LoginType.Password
+        }
+
+        return LoginType.None
+      } else if (username === defaultUsername && password === defaultPassword) {
+        onAuthenticated(getCredentialForUser({ username }))
+        return LoginType.Password
+      }
+
       return LoginType.None
     },
   }

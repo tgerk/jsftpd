@@ -21,19 +21,19 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+  allowUserFileRename: true,
+}
+
 test("test RNFR message file does not exist", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRename: true,
-    },
-  ]
   server = createFtpServer({
     port: 50021,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -68,18 +68,12 @@ test("test RNFR message file does not exist", async () => {
 })
 
 test("test RNFR/RNTO message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRename: true,
-    },
-  ]
   server = createFtpServer({
     port: 50021,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -136,13 +130,6 @@ test("test RNFR/RNTO message", async () => {
 })
 
 test("test RNFR/RNTO message using handlers", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileRename: true,
-    },
-  ]
   const fileRenameTo = jest
       .fn()
       .mockImplementationOnce((_toFile) => Promise.resolve(true)),
@@ -155,7 +142,8 @@ test("test RNFR/RNTO message using handlers", async () => {
       )
   server = createFtpServer({
     port: 50021,
-    user: users,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileRename,
     }),
@@ -187,13 +175,6 @@ test("test RNFR/RNTO message using handlers", async () => {
 })
 
 test("test RNFR/RNTO message using handlers failing", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileRename: true,
-    },
-  ]
   const fileRenameTo = jest
       .fn()
       .mockImplementationOnce((_toFile) => Promise.reject(new Error("mock"))),
@@ -206,7 +187,8 @@ test("test RNFR/RNTO message using handlers failing", async () => {
       )
   server = createFtpServer({
     port: 50021,
-    user: users,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileRename,
     }),
@@ -238,18 +220,12 @@ test("test RNFR/RNTO message using handlers failing", async () => {
 })
 
 test("test RNFR/RNTO message file already exists", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRename: true,
-    },
-  ]
   server = createFtpServer({
     port: 50021,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
   })
 
   let cmdSocket = new ExpectSocket()

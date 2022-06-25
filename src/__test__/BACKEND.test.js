@@ -23,23 +23,23 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+}
+
 test("test outbound filename transformation", async () => {
   function transformOutbound(file) {
     const { dir, base, name } = path.parse(file)
     return path.join(dir, base.match(/^\d+.nc$/i) ? `O${name}` : base)
   }
 
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFolderCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFolderCreate: true,
     store: (factory) =>
       Object.assign((user) => {
         const backend = factory(user),
@@ -99,17 +99,12 @@ test("test inbound filename transformation", async () => {
     return path.join(dir, dncForm ? `${dncForm[1]}.nc` : base)
   }
 
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
     store: (factory) =>
       Object.assign((user, client) => {
         return factory(user, client, {
@@ -132,14 +127,12 @@ test("test inbound filename transformation", async () => {
     `227 Entering passive mode (${passiveModeData})`
   )
 
-  let dataSocket = new ExpectSocket()
-  dataSocket.connect(dataPort, localhost)
-
   expect(await cmdSocket.command("STOR O0123").response()).toBe(
     "150 Awaiting passive connection"
   )
 
-  await dataSocket.send("SOMETESTCONTENT")
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
   expect(await cmdSocket.response()).toBe(
     '226 Successfully transferred "O0123"'

@@ -29,19 +29,19 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+  allowUserFileCreate: true,
+  allowUserFileRetrieve: true,
+}
+
 test("test RETR message not allowed", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: false,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [{ ...john, allowUserFileRetrieve: false }],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -76,18 +76,11 @@ test("test RETR message not allowed", async () => {
 })
 
 test("test RETR message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -120,6 +113,7 @@ test("test RETR message", async () => {
 
   dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost)
+
   expect(await cmdSocket.response()).toMatch("550 File not found")
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
@@ -139,18 +133,11 @@ test("test RETR message", async () => {
 })
 
 test("test RETR message with ASCII", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -211,15 +198,6 @@ test("test RETR message with ASCII", async () => {
 })
 
 test("test RETR message with handler", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
-
   let doesFileExist = false
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
@@ -244,8 +222,9 @@ test("test RETR message with handler", async () => {
 
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(doesFileExist)
@@ -297,15 +276,6 @@ test("test RETR message with handler", async () => {
 })
 
 test("test RETR message with handler fails", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
-
   let doesFileExist = false
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
@@ -328,8 +298,9 @@ test("test RETR message with handler fails", async () => {
   )
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(doesFileExist)
@@ -384,16 +355,11 @@ test("test RETR message with handler fails", async () => {
 })
 
 test("test RETR message no active or passive mode", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
+    user: [john],
+    allowLoginWithoutPassword: true,
+
     store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(true)
@@ -424,18 +390,11 @@ test("test RETR message no active or passive mode", async () => {
 })
 
 test("test RETR over secure passive connection", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -498,18 +457,11 @@ test("test RETR over secure passive connection", async () => {
 })
 
 test("test RETR over active secure connection", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileRetrieve: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()

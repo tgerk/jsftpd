@@ -29,18 +29,18 @@ const cleanup = function () {
 beforeEach(() => cleanup())
 afterEach(() => cleanup())
 
+const john = {
+  username: "john",
+  allowLoginWithoutPassword: true,
+  allowUserFileCreate: true,
+}
+
 test("test STOR message without permission", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: false,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [{ ...john, allowUserFileCreate: false }],
+    allowLoginWithoutPassword: true,
   })
 
   const cmdSocket = new ExpectSocket()
@@ -69,17 +69,11 @@ test("test STOR message without permission", async () => {
 })
 
 test("test STOR message", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -134,16 +128,11 @@ test("test STOR message", async () => {
 })
 
 test("test passive data connection times out", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
     timeout: 3000,
   })
 
@@ -170,17 +159,11 @@ test("test passive data connection times out", async () => {
 })
 
 test("test STOR message with ASCII", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -235,18 +218,11 @@ test("test STOR message with ASCII", async () => {
 })
 
 test("test STOR message overwrite not allowed", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-      allowUserFileOverwrite: false,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [{ ...john, allowUserFileOverwrite: false }],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -304,13 +280,6 @@ test("test STOR message overwrite not allowed", async () => {
 })
 
 test("test STOR message with handler", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
       new Writable({
@@ -323,8 +292,9 @@ test("test STOR message with handler", async () => {
 
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(false)
@@ -366,13 +336,6 @@ test("test STOR message with handler", async () => {
 })
 
 test("test STOR message with handler fails", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   const fileStore = jest.fn().mockImplementationOnce(() =>
     Promise.resolve(
       new Writable({
@@ -385,8 +348,9 @@ test("test STOR message with handler fails", async () => {
 
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
       fileExists() {
         return Promise.resolve(false)
@@ -426,17 +390,11 @@ test("test STOR message with handler fails", async () => {
 })
 
 test("test STOR over secure passive connection", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -483,17 +441,11 @@ test("test STOR over secure passive connection", async () => {
 })
 
 test("test STOR over active secure connection", async () => {
-  const users = [
-    {
-      username: "john",
-      allowLoginWithoutPassword: true,
-      allowUserFileCreate: true,
-    },
-  ]
   server = createFtpServer({
     port: cmdPortTCP,
-    user: users,
     minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
   })
 
   let cmdSocket = new ExpectSocket()

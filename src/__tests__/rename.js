@@ -1,7 +1,12 @@
 import { jest } from "@jest/globals"
 
 import createFtpServer from "../jsftpd.js"
-import { sleep, getDataPort, ExpectSocket, addFactoryExtensions } from "./utils.js"
+import {
+  sleep,
+  getDataPort,
+  ExpectSocket,
+  addFactoryExtensions,
+} from "./utils.js"
 
 jest.setTimeout(5000)
 

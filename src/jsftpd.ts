@@ -26,7 +26,7 @@ import path from "path"
 import { Readable, Writable } from "stream"
 import { EventEmitter } from "events"
 
-import { deasciify, asciify } from "./ascii"
+import { deasciify, asciify } from "./util/ascii.js"
 
 import internalAuth, {
   AuthHandlersFactory,
@@ -34,7 +34,7 @@ import internalAuth, {
   LoginType,
   Permissions,
   Credential,
-} from "./auth"
+} from "./auth.js"
 
 import localBackend, {
   StoreFactory,
@@ -42,7 +42,7 @@ import localBackend, {
   Stats,
   Errors as StoreErrors,
   AbsolutePath,
-} from "./store"
+} from "./store.js"
 
 export type ComposableAuthHandlerFactory = (
   factory: AuthHandlersFactory
@@ -63,6 +63,7 @@ export type ServerOptions = {
   auth?: ComposableAuthHandlerFactory
   store?: ComposableStoreFactory | ComposableStoreFactory[]
 } & AuthOptions
+export type FtpServer = ReturnType<typeof createFtpServer>
 
 interface FTPCommandTable {
   [fn: string]: (cmd: string, ...args: string[]) => void
@@ -73,8 +74,7 @@ type ConnectionSource = Server & {
   nextConnection: () => Promise<Socket>
 }
 
-export default createFtpServer
-export function createFtpServer({
+export default function createFtpServer({
   server,
   port = 21,
   securePort,
@@ -109,26 +109,25 @@ export function createFtpServer({
   // need to always prepare TLS certs and secure context,
   //  because we implement FTPS (via AUTH TLS, like STARTTLS),
   //  even if not necessarily SFTP(default port 990)
-  const secureOptions = (async function getSecureOptions(
-      tlsOptions: SecureContextOptions
-    ): Promise<SecureContextOptions> {
+  const secureOptions = new Promise<SecureContextOptions>((resolve) => {
       tlsOptions = {
         honorCipherOrder: true,
         // rejectUnauthorized: false, // enforce CA trust
         ...tlsOptions,
       }
       if (
-        !("pfx" in tlsOptions) &&
-        (!("key" in tlsOptions) || !("cert" in tlsOptions))
+        "pfx" in tlsOptions ||
+        ("key" in tlsOptions && "cert" in tlsOptions)
       ) {
-        // generate self-signed certificate
-        const { cert, key } = await import("./cert")
-        tlsOptions.cert = cert
-        tlsOptions.key = key
+        resolve(tlsOptions)
+        return
       }
 
-      return tlsOptions
-    })(tlsOptions),
+      // generate self-signed certificate
+      import("./tls/index.js").then((options) =>
+        resolve({ ...tlsOptions, ...options })
+      )
+    }),
     secureContext = secureOptions.then(createSecureContext)
 
   // setup FTP, FTPS servers

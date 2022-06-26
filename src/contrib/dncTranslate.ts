@@ -7,8 +7,8 @@
 
 import path from "path"
 import { Socket } from "net"
-import { Credential } from "../auth"
-import { StoreFactory, Store, StoreOptions, Path } from "../store"
+import { Credential } from "../auth.js"
+import { StoreFactory, Store, StoreOptions, Path } from "../store.js"
 
 // present names in on-disk ####.nc format as DNC-style O####
 function transformOutbound(file: Path): typeof file {

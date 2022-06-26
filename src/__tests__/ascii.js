@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
-const { asciify, deasciify } = require("../ascii.ts")
-const { Readable, Writable } = require("stream")
+import { Readable, Writable } from "stream"
+
+import { asciify, deasciify } from "../util/ascii"
 
 function getSink() {
   return new Writable({

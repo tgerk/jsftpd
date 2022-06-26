@@ -1,14 +1,16 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer } = require("../jsftpd.ts")
-const {
+import { jest } from "@jest/globals"
+import path from "node:path"
+
+import createFtpServer from "../jsftpd.js"
+import {
   getCmdPortTCP,
   getDataPort,
   formatPort,
   ExpectSocket,
-} = require("./utils")
-const path = require("path")
+} from "./utils.js"
 
 jest.setTimeout(5000)
+
 const cmdPortTCP = getCmdPortTCP()
 const dataPort = getDataPort()
 const localhost = "127.0.0.1"
@@ -41,8 +43,8 @@ test("test outbound filename transformation", async () => {
     allowLoginWithoutPassword: true,
     allowUserFolderCreate: true,
     store: (factory) =>
-      Object.assign((user) => {
-        const backend = factory(user),
+      Object.assign((user, client) => {
+        const backend = factory(user, client),
           { folderList: folderListOriginal } = backend
         return Object.assign(backend, {
           // display on-disk ####.nc files with DNC-style O#### names
@@ -58,7 +60,7 @@ test("test outbound filename transformation", async () => {
       }, factory),
   })
 
-  let cmdSocket = new ExpectSocket()
+  const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
@@ -113,7 +115,7 @@ test("test inbound filename transformation", async () => {
       }, factory),
   })
 
-  let cmdSocket = new ExpectSocket()
+  const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
   )
@@ -131,7 +133,7 @@ test("test inbound filename transformation", async () => {
     "150 Awaiting passive connection"
   )
 
-  let dataSocket = new ExpectSocket()
+  const dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
 
   expect(await cmdSocket.response()).toBe(

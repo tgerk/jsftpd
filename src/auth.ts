@@ -1,5 +1,5 @@
 import { Socket } from "net"
-import { AbsolutePath, RelativePath } from "./store"
+import { AbsolutePath, RelativePath } from "./store.js"
 
 export enum LoginType {
   None,
@@ -8,7 +8,7 @@ export enum LoginType {
   NoPassword,
 }
 
-enum permissions {
+export enum permissions {
   FileCreate = "FileCreate",
   FileRetrieve = "FileRetrieve",
   FileOverwrite = "FileOverwrite",

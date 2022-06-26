@@ -1,8 +1,10 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
-const { createFtpServer } = require("../jsftpd.ts")
-const { getCmdPortTCP, ExpectSocket } = require("./utils")
+import { jest } from "@jest/globals"
+
+import createFtpServer from "../jsftpd.js"
+import { getCmdPortTCP, ExpectSocket } from "./utils.js"
 
 jest.setTimeout(5000)
+
 let server
 const cmdPortTCP = getCmdPortTCP()
 const localhost = "127.0.0.1"

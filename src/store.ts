@@ -15,7 +15,7 @@ import {
 } from "fs"
 import { Readable, Writable } from "stream"
 
-import { Credential } from "./auth"
+import { Credential } from "./auth.js"
 
 // TODO: PathNode is a string with no directory separators
 export type PathNode = string
@@ -70,8 +70,7 @@ export type StoreFactory = (
   options?: StoreOptions
 ) => Store
 
-export default localStoreFactoryInit
-export function localStoreFactoryInit(basefolder?: Path) {
+export default function localStoreFactoryInit(basefolder?: Path) {
   let cleanup: () => void
   if (basefolder) {
     if (!existsSync(basefolder)) {

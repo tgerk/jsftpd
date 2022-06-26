@@ -1,37 +1,36 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
-const util = require("util")
-const net = require("net")
-const tls = require("tls")
-const { PromiseSocket } = require("promise-socket")
+import util from "util"
+import net from "net"
+import tls from "tls"
+import { PromiseSocket } from "promise-socket"
 
 // eslint-disable-next-line no-undef
 const NODE_MAJOR_VERSION = process.versions.node.split(".")[0]
 
-function sleep(ms) {
+export function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
 }
 
-function formatPort(addr, port) {
+export function formatPort(addr, port) {
   const p1 = (port / 256) | 0
   const p2 = port % 256
   return util.format("%s,%d,%d", addr.split(".").join(","), p1, p2)
 }
 
-function getCmdPortTCP() {
+export function getCmdPortTCP() {
   return parseInt(NODE_MAJOR_VERSION + "021")
 }
 
-function getCmdPortTLS() {
+export function getCmdPortTLS() {
   return parseInt(NODE_MAJOR_VERSION + "990")
 }
 
-function getDataPort() {
+export function getDataPort() {
   return parseInt(NODE_MAJOR_VERSION + "120")
 }
 
-class ExpectServer {
+export class ExpectServer {
   constructor(server) {
     this.server = server ?? net.createServer({ backlog: 0 })
     this.server.maxConnections = 1
@@ -58,7 +57,7 @@ class ExpectServer {
   }
 }
 
-class ExpectSocket extends PromiseSocket {
+export class ExpectSocket extends PromiseSocket {
   constructor(socket) {
     super(socket ?? new net.Socket())
   }
@@ -93,18 +92,7 @@ class ExpectSocket extends PromiseSocket {
   }
 }
 
-function addFactoryExtensions(extensions) {
+export function addFactoryExtensions(extensions) {
   return (factory) =>
     Object.assign((opts) => Object.assign(factory(opts), extensions), factory)
-}
-
-module.exports = {
-  sleep,
-  formatPort,
-  getCmdPortTCP,
-  getCmdPortTLS,
-  getDataPort,
-  ExpectServer,
-  ExpectSocket,
-  addFactoryExtensions,
 }

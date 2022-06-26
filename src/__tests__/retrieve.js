@@ -200,19 +200,14 @@ test("test RETR message with ASCII", async () => {
 })
 
 test("test RETR message with handler", async () => {
-  let doesFileExist = false
-  const fileStore = jest.fn().mockImplementationOnce(() =>
-    Promise.resolve(
+  const fileStore = jest.fn().mockResolvedValueOnce(
       new Writable({
         write: (data, enc, cb) => {
-          doesFileExist = true
           cb()
         },
       })
-    )
-  )
-  const fileRetrieve = jest.fn().mockImplementationOnce(() =>
-    Promise.resolve(
+    ),
+    fileRetrieve = jest.fn().mockResolvedValueOnce(
       new Readable({
         read: function () {
           this.push("SOMETESTCONTENT")
@@ -220,17 +215,12 @@ test("test RETR message with handler", async () => {
         },
       })
     )
-  )
-
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,
     user: [john],
     allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
-      fileExists() {
-        return Promise.resolve(doesFileExist)
-      },
       fileRetrieve,
       fileStore,
     }),
@@ -278,35 +268,26 @@ test("test RETR message with handler", async () => {
 })
 
 test("test RETR message with handler fails", async () => {
-  let doesFileExist = false
-  const fileStore = jest.fn().mockImplementationOnce(() =>
-    Promise.resolve(
+  const fileStore = jest.fn().mockResolvedValueOnce(
       new Writable({
         write: (data, enc, cb) => {
-          doesFileExist = true
           cb()
         },
       })
-    )
-  )
-  const fileRetrieve = jest.fn().mockImplementationOnce(() =>
-    Promise.resolve(
+    ),
+    fileRetrieve = jest.fn().mockResolvedValueOnce(
       new Readable({
         read: function () {
           this.destroy(Error("mock"))
         },
       })
     )
-  )
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,
     user: [john],
     allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
-      fileExists() {
-        return Promise.resolve(doesFileExist)
-      },
       fileRetrieve,
       fileStore,
     }),

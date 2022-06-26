@@ -132,15 +132,11 @@ test("test RNFR/RNTO message", async () => {
 })
 
 test("test RNFR/RNTO message using handlers", async () => {
-  const fileRenameTo = jest
-      .fn()
-      .mockImplementationOnce((_toFile) => Promise.resolve(true)),
+  const fileRenameTo = jest.fn().mockResolvedValue(true),
     fileRename = jest
       .fn()
-      .mockImplementationOnce(
-        (fromFile) =>
-          fromFile === "mytestfile" &&
-          Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
+      .mockImplementation((fromFile) =>
+        Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
       )
   server = createFtpServer({
     port: 50021,
@@ -177,15 +173,11 @@ test("test RNFR/RNTO message using handlers", async () => {
 })
 
 test("test RNFR/RNTO message using handlers failing", async () => {
-  const fileRenameTo = jest
-      .fn()
-      .mockImplementationOnce((_toFile) => Promise.reject(new Error("mock"))),
+  const fileRenameTo = jest.fn().mockRejectedValueOnce(new Error("mock")),
     fileRename = jest
       .fn()
-      .mockImplementationOnce(
-        (fromFile) =>
-          fromFile === "mytestfile" &&
-          Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
+      .mockImplementation((fromFile) =>
+        Promise.resolve(Object.assign(fileRenameTo, { fromFile }))
       )
   server = createFtpServer({
     port: 50021,

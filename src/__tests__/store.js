@@ -282,16 +282,13 @@ test("test STOR message overwrite not allowed", async () => {
 })
 
 test("test STOR message with handler", async () => {
-  const fileStore = jest.fn().mockImplementationOnce(() =>
-    Promise.resolve(
-      new Writable({
-        write: (data, enc, cb) => {
-          cb()
-        },
-      })
-    )
+  const fileStore = jest.fn().mockResolvedValueOnce(
+    new Writable({
+      write: (data, enc, cb) => {
+        cb()
+      },
+    })
   )
-
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,
@@ -338,16 +335,13 @@ test("test STOR message with handler", async () => {
 })
 
 test("test STOR message with handler fails", async () => {
-  const fileStore = jest.fn().mockImplementationOnce(() =>
-    Promise.resolve(
-      new Writable({
-        write: (data, enc, cb) => {
-          cb(Error("mock write failed"))
-        },
-      })
-    )
+  const fileStore = jest.fn().mockResolvedValueOnce(
+    new Writable({
+      write: (data, enc, cb) => {
+        cb(Error("mock write failed"))
+      },
+    })
   )
-
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,

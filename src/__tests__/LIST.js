@@ -218,7 +218,7 @@ test("test MLSD message over secure active connection", async () => {
 })
 
 test("test MLSD message with handler", async () => {
-  const folderList = jest.fn().mockImplementationOnce(() => Promise.resolve([]))
+  const folderList = jest.fn().mockResolvedValueOnce([])
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,

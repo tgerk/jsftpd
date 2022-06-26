@@ -53,8 +53,8 @@ test("create ftpd instance without options created with default values", async (
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy()
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy()
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy() */
-  const handler = jest.fn()
-  server.on("listen", handler)
+  const onListenFn = jest.fn()
+  server.on("listen", onListenFn)
 
   {
     // expect(server._opt.cnf.port).toBe(21)
@@ -63,7 +63,7 @@ test("create ftpd instance without options created with default values", async (
       "220 Welcome"
     )
 
-    expect(handler).toBeCalledTimes(1)
+    expect(onListenFn).toBeCalledTimes(1)
 
     await cmdSocket.end()
   }
@@ -98,15 +98,15 @@ test("ftp server can be started on non default ports", async () => {
   // expect(server._opt.cnf.securePort).toBe(cmdPortTLS)
   // expect(server._tcp.address().port).toBe(cmdPortTCP)
   // expect(server._tls.address().port).toBe(cmdPortTLS)
-  const handler = jest.fn()
-  server.on("listen", handler)
+  const onListenFn = jest.fn()
+  server.on("listen", onListenFn)
 
   const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP + 2, localhost).response()).toBe(
     "220 Welcome"
   )
 
-  expect(handler).toBeCalledTimes(2)
+  expect(onListenFn).toBeCalledTimes(2)
 
   await cmdSocket.end()
 })

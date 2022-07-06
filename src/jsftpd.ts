@@ -99,7 +99,7 @@ export default function createFtpServer({
   const localStoreFactory = localBackend(basefolder)
   let storeFactory: StoreFactory
   if (store instanceof Array) {
-    storeFactory = store.reduceRight((y, f) => f(y), localStoreFactory)
+    storeFactory = store.reduce((y, f) => f(y), localStoreFactory)
   } else if (store) {
     storeFactory = store(localStoreFactory)
   } else {
@@ -976,14 +976,15 @@ export default function createFtpServer({
 
     function setUser(credential: Credential) {
       resetSession()
+
       ;({ username } = credential)
       authenticated = true
-
       permissions = Object.fromEntries(
         Object.entries(credential).filter((entry) =>
           entry[0].startsWith("allow")
         )
       ) as Permissions
+
       ;({
         setFolder,
         getFolder,
@@ -1000,7 +1001,6 @@ export default function createFtpServer({
         fileSetTimes,
       } = storeFactory(credential, client))
 
-      // LATER: emit an Event object
       emitter.emit("login", {
         username,
         clientInfo,

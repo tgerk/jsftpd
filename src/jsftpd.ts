@@ -976,7 +976,6 @@ export default function createFtpServer({
 
     function setUser(credential: Credential) {
       resetSession()
-
       ;({ username } = credential)
       authenticated = true
       permissions = Object.fromEntries(
@@ -984,7 +983,6 @@ export default function createFtpServer({
           entry[0].startsWith("allow")
         )
       ) as Permissions
-
       ;({
         setFolder,
         getFolder,

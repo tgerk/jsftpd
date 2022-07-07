@@ -210,7 +210,7 @@ export default function createFtpServer({
       fileRetrieve: Store["fileRetrieve"],
       fileStore: Store["fileStore"],
       fileRename: Store["fileRename"],
-      fileSetTimes: Store["fileSetTimes"]
+      fileSetAttributes: Store["fileSetAttributes"]
 
     let dataPort: TcpSocketConnectOpts | ConnectionSource,
       renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
@@ -895,7 +895,7 @@ export default function createFtpServer({
         } else if (!renameFileToFn) {
           client.respond("503", "RNFR missing")
         } else {
-          renameFileToFn(file)
+          renameFileToFn(file, permissions.allowFileOverwrite)
             .then(
               () => {
                 client.respond("250", "File renamed successfully")
@@ -929,7 +929,7 @@ export default function createFtpServer({
        */
       MFMT: function (cmd: string, time: string, file: string) {
         const mtime = parse_rfc3659_time(time)
-        fileSetTimes(file, mtime).then(
+        fileSetAttributes(file, { mtime }).then(
           () => {
             client.respond("253", "Date/time changed okay")
           },
@@ -996,7 +996,7 @@ export default function createFtpServer({
         fileRetrieve,
         fileStore,
         fileRename,
-        fileSetTimes,
+        fileSetAttributes,
       } = storeFactory(credential, client))
 
       emitter.emit("login", {

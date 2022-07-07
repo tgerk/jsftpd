@@ -167,7 +167,7 @@ test("test RNFR/RNTO message using handlers", async () => {
   expect(fileRename).toBeCalledTimes(1)
   expect(fileRename).toHaveBeenCalledWith("mytestfile")
   expect(fileRenameTo).toBeCalledTimes(1)
-  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile")
+  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile", false)
 
   await cmdSocket.end()
 })
@@ -208,7 +208,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   expect(fileRename).toBeCalledTimes(1)
   expect(fileRename).toHaveBeenCalledWith("mytestfile")
   expect(fileRenameTo).toBeCalledTimes(1)
-  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile")
+  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile", false)
 
   await cmdSocket.end()
 })

@@ -53,10 +53,15 @@ export interface Store {
   fileStats(file: Path): Promise<Stats>
   fileRetrieve(file: Path, seek?: number): Promise<Readable>
   fileStore(file: Path, allowReplace: boolean, seek?: number): Promise<Writable>
-  fileRename(
-    fromFile: Path
-  ): Promise<((toFile: Path) => Promise<void>) & { fromFile: Path }>
-  fileSetTimes(file: Path, mtime: Date, atime?: Date): Promise<void>
+  fileRename(fromFile: Path): Promise<
+    ((toFile: Path, allowOverwrite: boolean) => Promise<void>) & {
+      fromFile: Path
+    }
+  >
+  fileSetAttributes(
+    file: Path,
+    attributes: Record<string, unknown>
+  ): Promise<void>
 }
 
 export type StoreOptions = {
@@ -248,7 +253,7 @@ export default function localStoreFactoryInit(basefolder?: Path) {
         },
 
         fileRename(fromFile: Path) {
-          const fileExists = (file: Path): Promise<void> =>
+          const isFile = (file: Path): Promise<void> =>
             fs.stat(file).then((fstat) => {
               if (!fstat.isFile()) {
                 throw Object.assign(new Error("not file"), {
@@ -257,15 +262,17 @@ export default function localStoreFactoryInit(basefolder?: Path) {
               }
             })
 
-          // advance existence check is inconclusive, should skip & check error condition later
           return resolveFile(fromFile).then((fromFile) =>
-            fileExists(fromFile).then(async () => {
+            isFile(fromFile).then(async () => {
               return Object.assign(
-                function fileRenameTo(toFile: Path) {
+                function fileRenameTo(toFile: Path, allowOverwrite: boolean) {
                   return resolveFile(toFile).then((toFile) =>
-                    fileExists(toFile).then(
+                    isFile(toFile).then(
                       () => {
-                        // what if allowed to replace/overwrite?
+                        if (allowOverwrite) {
+                          return fs.rename(fromFile, toFile)
+                        }
+
                         throw Object.assign(Error(toFile), {
                           code: Errors.EEXIST,
                         })
@@ -280,10 +287,16 @@ export default function localStoreFactoryInit(basefolder?: Path) {
           )
         },
 
-        fileSetTimes(file: Path, mtime: Date, atime: Date) {
-          return resolveFile(file).then((file) =>
-            fs.utimes(file, atime ?? mtime, mtime)
-          )
+        fileSetAttributes(
+          file: Path,
+          attributes: { atime?: Date; mtime?: Date } & Record<string, unknown>
+        ) {
+          return resolveFile(file).then((file) => {
+            const { atime, mtime } = attributes
+            if (mtime || atime) {
+              return fs.utimes(file, atime ?? new Date(), mtime)
+            }
+          })
         },
       }
     },

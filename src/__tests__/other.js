@@ -611,12 +611,7 @@ test("test MFMT message with handler", async () => {
     user: [john],
     allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
-      fileExists() {
-        return Promise.resolve(true)
-      },
-      fileSetTimes() {
-        return Promise.resolve()
-      },
+      fileSetAttributes: jest.fn().mockResolvedValue(),
     }),
   })
 

@@ -342,12 +342,6 @@ test("test RETR message no active or passive mode", async () => {
     port: cmdPortTCP,
     user: [john],
     allowLoginWithoutPassword: true,
-
-    store: addFactoryExtensions({
-      fileExists() {
-        return Promise.resolve(true)
-      },
-    }),
   })
 
   let cmdSocket = new ExpectSocket()

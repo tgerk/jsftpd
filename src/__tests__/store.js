@@ -294,12 +294,7 @@ test("test STOR message with handler", async () => {
     minDataPort: dataPort,
     user: [john],
     allowLoginWithoutPassword: true,
-    store: addFactoryExtensions({
-      fileExists() {
-        return Promise.resolve(false)
-      },
-      fileStore,
-    }),
+    store: addFactoryExtensions({ fileStore }),
   })
 
   let cmdSocket = new ExpectSocket()
@@ -347,12 +342,7 @@ test("test STOR message with handler fails", async () => {
     minDataPort: dataPort,
     user: [john],
     allowLoginWithoutPassword: true,
-    store: addFactoryExtensions({
-      fileExists() {
-        return Promise.resolve(false)
-      },
-      fileStore,
-    }),
+    store: addFactoryExtensions({ fileStore }),
   })
 
   let cmdSocket = new ExpectSocket()

@@ -1,6 +1,6 @@
-import { Readable, Writable } from "stream"
+import { Readable, Writable } from "node:stream"
 
-import { asciify, deasciify } from "../util/ascii"
+import { asciify, deasciify } from "./util/ascii"
 
 function getSink() {
   return new Writable({

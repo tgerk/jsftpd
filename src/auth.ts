@@ -1,4 +1,4 @@
-import { Socket } from "net"
+import { Socket } from "node:net"
 import { AbsolutePath, RelativePath } from "./store.js"
 
 export enum LoginType {
@@ -55,39 +55,30 @@ export type Credential = {
   basefolder?: UserBaseFolder
 } & Permissions
 
-export interface OnAuthHandler {
-  (cred: Credential): void
-}
+export type AuthFunction = (
+  client: Socket,
+  user: string,
+  pass?: string
+) => Promise<Credential>
 
-export interface AuthHandlers {
-  userLoginType(client: Socket, user: string, onAuth: OnAuthHandler): LoginType
-  userAuthenticate(
-    client: Socket,
-    user: string,
-    pass: string,
-    onAuth: OnAuthHandler
-  ): LoginType
-}
+export type AuthFactory = (options: AuthOptions) => AuthFunction
 
-export type AuthHandlersFactory = (options: AuthOptions) => AuthHandlers
-
-export default function ({
+export default function authScheme({
   user: users,
+  allowAnonymousLogin,
   username: defaultUsername,
   password: defaultPassword,
-  allowFromAddrWithoutPassword,
   allowLoginWithoutPassword,
-  allowAnonymousLogin,
+  allowFromAddrWithoutPassword,
   ...defaults
-}: AuthOptions): AuthHandlers {
+}: AuthOptions): AuthFunction {
   const defaultPrivilege = Object.fromEntries(
-    Object.keys(permissions).map((k) => [
-      `allow${k}`,
-      defaults[`allow${k}` as keyof typeof defaults] ?? false,
-    ])
-  ) as Permissions
-
-  const getCredentialForAnon = (password: string) =>
+      Object.keys(permissions).map((k) => [
+        `allow${k}`,
+        defaults[`allow${k}` as keyof typeof defaults] ?? false,
+      ])
+    ) as Permissions,
+    getCredentialForAnon = (password: string) =>
       ({
         ...defaultPrivilege,
         ...Object.fromEntries(
@@ -114,21 +105,21 @@ export default function ({
         ),
       } as Credential)
 
-  return {
-    userLoginType(
-      client: Socket,
-      username: string,
-      onAuthenticated: (credential: Credential) => void
-    ): LoginType {
+  return function userAuthenticate(
+    client: Socket,
+    username: string,
+    password?: string
+  ) {
+    return new Promise((resolve, reject) => {
       if (username === "anonymous") {
         if (allowAnonymousLogin) {
-          return LoginType.Anonymous
+          if (password) {
+            resolve(getCredentialForAnon(password))
+          } else {
+            reject(LoginType.Anonymous)
+          }
         }
-
-        return LoginType.None
-      }
-
-      if (users?.length > 0) {
+      } else if (users?.length > 0) {
         const user = users.find((user) => user.username === username)
         if (user) {
           if (
@@ -136,55 +127,32 @@ export default function ({
             (allowFromAddrWithoutPassword &&
               client.remoteAddress.match(user.allowFromAddrWithoutPassword))
           ) {
-            onAuthenticated(getCredentialForUser(user))
-            return LoginType.NoPassword
+            resolve(getCredentialForUser(user))
+          } else if (password) {
+            if (password === user.password) {
+              resolve(getCredentialForUser(user))
+            }
+          } else {
+            reject(LoginType.Password)
           }
-
-          return LoginType.Password
         }
-
-        return LoginType.None
       } else if (username === defaultUsername) {
         if (allowLoginWithoutPassword === true) {
-          onAuthenticated(getCredentialForUser({ username }))
-          return LoginType.NoPassword
+          resolve(getCredentialForUser({ username }))
+        } else if (password) {
+          if (password === defaultPassword) {
+            resolve(getCredentialForUser({ username }))
+          }
+        } else {
+          reject(LoginType.Password)
         }
-
-        return LoginType.Password
       }
 
-      return LoginType.None
-    },
-
-    userAuthenticate(
-      client: Socket,
-      username: string,
-      password: string,
-      onAuthenticated: (credential: Credential) => void
-    ): LoginType {
-      if (username === "anonymous") {
-        if (allowAnonymousLogin) {
-          onAuthenticated(getCredentialForAnon(password))
-          return LoginType.Anonymous
-        }
-
-        return LoginType.None
-      }
-
-      if (users?.length > 0) {
-        const user = users.find((user) => user.username === username)
-        if (user && user.password === password) {
-          onAuthenticated(getCredentialForUser(user))
-          return LoginType.Password
-        }
-
-        return LoginType.None
-      } else if (username === defaultUsername && password === defaultPassword) {
-        onAuthenticated(getCredentialForUser({ username }))
-        return LoginType.Password
-      }
-
-      return LoginType.None
-    },
+      reject(LoginType.None)
+    })
   }
 }
+
+/** OAuth authentication for FTP:
+ * most sensible is the Password grant (FTP does not provide redirect, e.g. the auth-code grant)
+ */

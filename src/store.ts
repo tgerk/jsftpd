@@ -2,9 +2,8 @@ import {
   join as joinPath,
   relative as relativePath,
   resolve as resolvePath,
-} from "path"
-import { Socket } from "net"
-import fs from "fs/promises"
+} from "node:path"
+import fs from "node:fs/promises"
 import {
   existsSync,
   mkdirSync,
@@ -12,20 +11,30 @@ import {
   Stats as FsStats,
   createReadStream,
   createWriteStream,
-} from "fs"
-import { Readable, Writable } from "stream"
+} from "node:fs"
+import type { Socket } from "node:net"
+import type { Readable, Writable } from "node:stream"
 
-import { Credential } from "./auth.js"
+import type { Credential } from "./auth.js"
 
-// TODO: PathNode is a string with no directory separators
-export type PathNode = string
-
-// TODO: a string with optional directory separators, but not in first position
-//  or recursively (illegal) `${RelativePath}/${PathNode}` | PathNode
-export type RelativePath = string | PathNode
-
+// TODO: PathSegment excludes url & directory separators
+export type PathSegment = string
+// TODO: RelativePath may have any number of path segments
+//  (Typescript does not support recursive type-defintion)
+// export type RelativePath = PathSegment | `${PathSegment}/${RelativePath}`
+export type RelativePath = PathSegment | `${PathSegment}/${PathSegment}`
 export type AbsolutePath = `/${RelativePath}`
 export type Path = AbsolutePath | RelativePath
+
+// TODO: need more type assertions
+declare module "path" {
+  interface PlatformPath {
+    isAbsolute(p: string): p is AbsolutePath // extends boolean return value
+    join(arg: AbsolutePath, ...args: string[]): AbsolutePath
+    resolve(...pathSegments: string[]): AbsolutePath
+  }
+}
+
 export type Stats = Partial<FsStats> & { name: string }
 
 export enum Errors {

@@ -1,5 +1,6 @@
 import {
   join as joinPath,
+  parse as parsePath,
   relative as relativePath,
   resolve as resolvePath,
 } from "node:path"
@@ -127,7 +128,10 @@ export default function localStoreFactoryInit(basefolder?: Path) {
 
       const resolveFolder = (folder: Path = ""): Promise<AbsolutePath> =>
           new Promise((resolve) => {
-            folder = joinPath(rootFolder, resolvePath(currentFolder, folder))
+            folder = joinPath(
+              rootFolder,
+              resolvePath(currentFolder, String(folder))
+            )
             folder = resolveFoldername?.(folder) ?? folder
             if (!folder.startsWith(rootFolder)) {
               resolve(rootFolder) // no jailbreak!
@@ -137,7 +141,10 @@ export default function localStoreFactoryInit(basefolder?: Path) {
           }),
         resolveFile = (file: Path = ""): Promise<AbsolutePath> =>
           new Promise((resolve, reject) => {
-            file = joinPath(rootFolder, resolvePath(currentFolder, file))
+            file = joinPath(
+              rootFolder,
+              resolvePath(currentFolder, String(file))
+            )
             file = resolveFilename?.(file) ?? file
             if (!file.startsWith(rootFolder)) {
               reject() // no jailbreak!
@@ -194,22 +201,30 @@ export default function localStoreFactoryInit(basefolder?: Path) {
           )
         },
 
-        folderList(folder: Path) {
-          return resolveFolder(folder).then((folder) =>
+        folderList(path: Path) {
+          return resolveFolder(path).then((path) =>
             fs
-              .readdir(folder, {
+              .readdir(path, {
                 withFileTypes: true,
               })
-              .then((dirents) =>
-                Promise.all(
-                  dirents
-                    .filter((dirent) => dirent.isDirectory() || dirent.isFile())
-                    .map(({ name }) =>
-                      fs
-                        .stat(joinPath(folder, name))
-                        .then((fstat) => Object.assign(fstat, { name }))
-                    )
-                )
+              .then(
+                (dirents) =>
+                  Promise.all(
+                    dirents
+                      .filter(
+                        (dirent) => dirent.isDirectory() || dirent.isFile()
+                      )
+                      .map(({ name }) =>
+                        fs
+                          .stat(joinPath(path, name))
+                          .then((fstat) => Object.assign(fstat, { name }))
+                      )
+                  ),
+                () =>
+                  fs.stat(path).then((fstat) => {
+                    const { base: name } = parsePath(path)
+                    return [Object.assign(fstat, { name })]
+                  })
               )
           )
         },

@@ -9,22 +9,33 @@ export function formatListing(cmd = "LIST") {
       return ({ name }: Stats) => name
     case "MLSD":
       return (fstat: Stats) =>
-        format(
-          "type=%s;modify=%s;%s %s",
-          fstat.isDirectory() ? "dir" : "file",
-          format_rfc3659_time(fstat.mtime),
-          fstat.isDirectory() ? "" : "size=" + fstat.size.toString() + ";",
-          fstat.name
-        )
+        fstat.isDirectory()
+          ? format(
+              "type=dir;modify=%s; %s",
+              format_rfc3659_time(fstat.mtime),
+              fstat.name
+            )
+          : format(
+              "type=file;modify=%s;size=%d; %s",
+              format_rfc3659_time(fstat.mtime),
+              fstat.size,
+              fstat.name
+            )
     case "LIST":
     default:
       return (fstat: Stats) =>
-        format(
-          "%s 1 ? ? %s %s %s", // showing link-count = 1, don't expose uid, gid
-          fstat.isDirectory() ? "dr--r--r--" : "-r--r--r--",
-          String(fstat.isDirectory() ? "0" : fstat.size).padStart(14, " "),
-          formatDate_Mmm_DD_HH_mm(fstat.mtime),
-          fstat.name
-        )
+        fstat.isDirectory()
+          ? format(
+              "dr--r--r-- 1 ? ? %s %s %s", // unknown uid, gid
+              "0".padStart(14, " "),
+              formatDate_Mmm_DD_HH_mm(fstat.mtime),
+              fstat.name
+            )
+          : format(
+              "-r--r--r-- 1 ? ? %s %s %s", // unknown uid, gid
+              String(fstat.size).padStart(14, " "),
+              formatDate_Mmm_DD_HH_mm(fstat.mtime),
+              fstat.name
+            )
   }
 }

@@ -569,7 +569,10 @@ export default function createFtpServer({
                   socket.end(listing + "\r\n")
                   client.respond(
                     "226",
-                    `Successfully transferred "${getFolder()}"`
+                    `Successfully transferred "${path.resolve(
+                      getFolder(),
+                      folder ?? ""
+                    )}"`
                   )
                 },
                 (error) => {

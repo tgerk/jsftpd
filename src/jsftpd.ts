@@ -8,21 +8,19 @@
 
 import { EventEmitter } from "node:events"
 import path from "node:path"
-import {
-  Server,
+import { connect, createServer, Server } from "node:net"
+import type {
   Socket,
   AddressInfo,
-  createServer,
-  connect,
   ListenOptions,
   TcpSocketConnectOpts,
 } from "node:net"
 import {
-  SecureContextOptions,
   TLSSocket,
   createServer as createSecureServer,
   createSecureContext,
 } from "node:tls"
+import type { SecureContextOptions } from "node:tls"
 import { inspect, format } from "node:util"
 import type { Readable, Writable } from "node:stream"
 
@@ -44,6 +42,8 @@ import type { AbsolutePath } from "./store.js"
 import { asciify, deasciify } from "./util/ascii.js"
 import { formatListing } from "./util/list.js"
 import { format_rfc3659_time, parse_rfc3659_time } from "./util/time.js"
+import createConnectionSource from "./util/connection-source.js"
+import type { ConnectionSource } from "./util/connection-source.js"
 
 export type ComposableAuthFactory = (factory: AuthFactory) => AuthFactory
 export type ComposableStoreFactory = (factory: StoreFactory) => StoreFactory
@@ -64,11 +64,6 @@ export type ServerOptions = {
 
 export type FtpServer = ReturnType<typeof createFtpServer>
 
-// note vague resemblance to an async iterator
-type ConnectionSource = Server & {
-  nextConnection: () => Promise<Socket>
-}
-
 export default function createFtpServer({
   server,
   port = 21,
@@ -87,19 +82,22 @@ export default function createFtpServer({
   let clientCounter = 0
   const clientSessions: Set<Socket> = new Set()
 
+  const emitter = new EventEmitter()
+
   // compose auth and storage backend handler factories
   const authFactory = auth?.(internalAuth) ?? internalAuth
   let authenticate = authFactory(authOptions)
 
-  const localStoreFactory = localBackend(basefolder)
-  let storeFactory: StoreFactory
-  if (store instanceof Array) {
-    storeFactory = store.reduce((y, f) => f(y), localStoreFactory)
-  } else if (store) {
-    storeFactory = store(localStoreFactory)
-  } else {
-    storeFactory = localStoreFactory
-  }
+  const localStoreFactory = localBackend(basefolder),
+    storeFactory: StoreFactory = (() => {
+      if (store) {
+        if (store instanceof Array) {
+          return store.reduce((y, f) => f(y), localStoreFactory)
+        }
+        return store(localStoreFactory)
+      }
+      return localStoreFactory
+    })()
 
   tlsOptions = {
     // rejectUnauthorized: false, // enforce CA trust
@@ -108,116 +106,53 @@ export default function createFtpServer({
   }
 
   // always prepare TLS certs and secure context for TLS escalation
-  const secureOptions =
-      "pfx" in tlsOptions || ("key" in tlsOptions && "cert" in tlsOptions)
-        ? Promise.resolve(tlsOptions)
-        : // load from well-known location, else generate self-signed certificate
-          import("./util/tls.js").then((keys) => ({
-            ...tlsOptions,
-            ...keys,
-          })),
-    secureContext = secureOptions.then(createSecureContext)
-
-  // setup FTP, FTPS servers
-  let tcpServer: Server, tlsServer: Server
-  if (server) {
-    server.on("connection", FtpSessionHandler)
-  } else {
-    if (port) {
-      tcpServer = createServer(FtpSessionHandler)
-
-      tcpServer.maxConnections = maxConnections
-      tcpServer.listen(port, function () {
-        // LATER: emit an Event object
-        emitter.emit("listen", {
-          protocol: "tcp",
-          ...(this.address() as AddressInfo),
-          basefolder: localStoreFactory.basefolder,
-        })
-      })
-    }
-
-    if (securePort) {
-      secureOptions.then((secureOptions) => {
-        tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
-          "error",
-          ErrorHandler
-        )
-
-        tlsServer.maxConnections = maxConnections
-        tlsServer.listen(securePort, function () {
-          // LATER: emit an Event object
-          emitter.emit("listen", {
-            protocol: "tls",
-            ...(this.address() as AddressInfo),
-            basefolder: localStoreFactory.basefolder,
-          })
-        })
-      })
-    }
-  }
-
-  const emitter = new EventEmitter()
-  return Object.assign(emitter, {
-    close() {
-      for (const session of clientSessions) {
-        session.destroy()
+  const secureOptions = (async () => {
+      if (
+        ("key" in tlsOptions && "cert" in tlsOptions) ||
+        "pfx" in tlsOptions
+      ) {
+        return tlsOptions
       }
 
-      tcpServer && tcpServer.close()
-      tlsServer && tlsServer.close()
+      // load key & cert from well-known location, else generate self-signed certificate
+      return await import("./util/tls.js").then((keys) => ({
+        ...tlsOptions,
+        ...keys,
+      }))
+    })(),
+    secureContext = secureOptions.then(createSecureContext)
 
-      localStoreFactory.cleanup?.()
-    },
+  function FtpSessionHandler(
+    client: Socket & {
+      respond?: (code: string, message: string, delimiter?: string) => void
+    }
+  ) {
+    const clientInfo = `[(${++clientCounter}) ${
+      client.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
+    }:${client.remotePort}]`
+    Object.assign(client, {
+      respond: function respond(
+        this: Socket,
+        code: string,
+        message: string,
+        delimiter = " "
+      ) {
+        log(`<<< ${code} ${message}`)
+        this.write(`${code}${delimiter}${message}\r\n`)
+      },
+    })
 
-    reloadAuth(authOptions: AuthOptions) {
-      authenticate = authFactory(authOptions)
-    },
-
-    FtpSessionHandler,
-  })
-
-  function FtpSessionHandler(cmdSocket: Socket) {
-    // track client session
-    clientSessions.add(cmdSocket)
-
-    // setup client session
-    let username = "nobody",
-      authenticated = false,
-      permissions: Permissions
-
-    let asciiTxfrMode = false,
-      pbszReceived = false,
-      protectedMode = false,
-      dataOffset = 0
-
-    let setFolder: Store["setFolder"],
-      getFolder: Store["getFolder"],
-      folderDelete: Store["folderDelete"],
-      folderCreate: Store["folderCreate"],
-      folderList: Store["folderList"],
-      fileStats: Store["fileStats"],
-      fileDelete: Store["fileDelete"],
-      fileRetrieve: Store["fileRetrieve"],
-      fileStore: Store["fileStore"],
-      fileRename: Store["fileRename"],
-      fileSetAttributes: Store["fileSetAttributes"]
-
-    let dataPort: TcpSocketConnectOpts | ConnectionSource,
-      renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
-
-    cmdSocket
+    client
       .on("error", SessionErrorHandler("command socket"))
       .on("close", function () {
+        ;(dataPort as ConnectionSource)?.close?.()
         clientSessions.delete(this)
-        if (dataPort instanceof Server) {
-          dataPort.close()
-        }
         debug(`FTP connection closed`)
       })
       .on("data", CmdHandler)
+
     if (timeout) {
-      cmdSocket.setTimeout(timeout, () => {
+      client.setTimeout(timeout, () => {
         client.respond("221", "Goodbye")
         client.end()
 
@@ -231,22 +166,79 @@ export default function createFtpServer({
       })
     }
 
-    const clientInfo = `[(${++clientCounter}) ${
-      cmdSocket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
-    }:${cmdSocket.remotePort}]`
-    let client = Object.assign(cmdSocket, {
-      respond: function respond(
-        this: Socket,
-        code: string,
-        message: string,
-        delimiter = " "
-      ) {
-        log(`<<< ${code} ${message}`)
-        this.write(`${code}${delimiter}${message}\r\n`)
-      },
-    })
+    clientSessions.add(client)
     client.respond("220", "Welcome")
     debug(`established FTP connection`)
+
+    // setup session
+    let authenticated = false,
+      permissions: Permissions,
+      username = "nobody"
+
+    // implement passive data server as an async iterator for incoming connections (as by Deno)
+    let dataPort: TcpSocketConnectOpts | ConnectionSource
+
+    let setFolder: Store["setFolder"],
+      getFolder: Store["getFolder"],
+      folderDelete: Store["folderDelete"],
+      folderCreate: Store["folderCreate"],
+      folderList: Store["folderList"],
+      fileStats: Store["fileStats"],
+      fileDelete: Store["fileDelete"],
+      fileRetrieve: Store["fileRetrieve"],
+      fileStore: Store["fileStore"],
+      fileRename: Store["fileRename"],
+      fileSetAttributes: Store["fileSetAttributes"],
+      renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
+
+    let asciiTxfrMode = false,
+      pbszReceived = false,
+      protectedMode = false,
+      dataOffset = 0
+
+    function resetSession() {
+      authenticated = false
+      permissions = undefined
+      username = "nobody"
+
+      asciiTxfrMode = false
+      pbszReceived = false
+      protectedMode = false
+      dataOffset = 0
+      ;(dataPort as ConnectionSource)?.close?.()
+      dataPort = renameFileToFn = undefined
+    }
+
+    function setUser(credential: Credential) {
+      authenticated = true
+      permissions = Object.fromEntries(
+        Object.entries(credential).filter((entry) =>
+          entry[0].startsWith("allow")
+        )
+      ) as Permissions
+      ;({ username } = credential)
+      ;({
+        setFolder,
+        getFolder,
+
+        folderDelete,
+        folderCreate,
+        folderList,
+
+        fileStats,
+        fileDelete,
+        fileRetrieve,
+        fileStore,
+        fileRename,
+        fileSetAttributes,
+      } = storeFactory(credential, client))
+
+      emitter.emit("login", {
+        username,
+        clientInfo,
+        openSessions: clientSessions.size,
+      })
+    }
 
     const preAuthMethods = {
         USER(_: string, user: string) {
@@ -291,7 +283,6 @@ export default function createFtpServer({
               client.respond("234", `Using authentication type ${auth}`)
               resetSession() // reset session variables (User, CWD, Mode, etc.  RFC-4217)
 
-              // Start TLS
               secureContext.then((secureContext) => {
                 client = Object.assign(
                   new TLSSocket(client, {
@@ -375,7 +366,7 @@ export default function createFtpServer({
           const [net0, net1, net2, net3, portHi, portLo] = spec.split(","),
             addr = [net0, net1, net2, net3].join("."),
             port = parseInt(portHi, 10) * 256 + parseInt(portLo)
-          if (addr.match(/\d{1,3}(\.\d{1,3}){3}/) && port > 0) {
+          if (/* addr.match(/\d{1,3}(\.\d{1,3}){3}/) && */ port > 0) {
             if (dataPort instanceof Server) {
               dataPort.close()
             }
@@ -393,7 +384,7 @@ export default function createFtpServer({
           }
           dataPort = undefined
 
-          startDataServer().then(
+          startPassiveDataServer().then(
             (server) => {
               dataPort = server
               const port = (server.address() as AddressInfo).port
@@ -424,7 +415,7 @@ export default function createFtpServer({
             port = parseInt(addrSpec[3], 10)
           if (
             addrSpec.length === 5 &&
-            addr.match(/\d{1,3}(\.\d{1,3}){3}/) &&
+            // addr.match(/\d{1,3}(\.\d{1,3}){3}/) && // skip this check to permit IPv6
             port > 0
           ) {
             if (dataPort instanceof Server) {
@@ -444,7 +435,7 @@ export default function createFtpServer({
           }
           dataPort = undefined
 
-          startDataServer().then(
+          startPassiveDataServer().then(
             (server) => {
               dataPort = server
               const port = (server.address() as AddressInfo).port
@@ -558,32 +549,22 @@ export default function createFtpServer({
         },
 
         LIST(cmd: string, folder: string) {
-          openDataSocket().then(
-            (socket: Writable) =>
-              folderList(folder).then(
-                (stats) => {
-                  const listing = stats.map(formatListing(cmd)).join("\r\n")
-                  debug(
-                    `LIST response on data channel\r\n${listing || "(empty)"}`
-                  )
-                  socket.end(listing + "\r\n")
-                  client.respond(
-                    "226",
-                    `Successfully transferred "${path.resolve(
-                      getFolder(),
-                      folder ?? ""
-                    )}"`
-                  )
-                },
-                (error) => {
-                  socket.end()
-                  SessionErrorHandler(cmd)(error)
-                  client.respond("501", `Command failed`)
-                }
-              ),
-            (error: NodeJS.ErrnoException) => {
+          Promise.all([getDataSocket(), folderList(folder)]).then(
+            ([socket, stats]) => {
+              const listing = stats.map(formatListing(cmd)).join("\r\n")
+              debug(`LIST response on data channel\r\n${listing || "(empty)"}`)
+              socket.end(listing + "\r\n") // FileZilla has a cow, "TLS connection was non-properly terminated" some half-open problem?
+              client.respond(
+                "226",
+                `Successfully transferred "${path.resolve(
+                  getFolder(),
+                  folder ?? ""
+                )}"`
+              )
+            },
+            (error) => {
               SessionErrorHandler(cmd)(error)
-              client.respond("501", "Command failed")
+              client.respond("501", `Command failed`)
             }
           )
         },
@@ -638,7 +619,7 @@ export default function createFtpServer({
             client.respond("550", `Transfer failed "${file}"`)
             // Could client connecton be waiting on passive port?
           } else {
-            openDataSocket().then(
+            getDataSocket().then(
               (writeSocket: Writable) =>
                 fileRetrieve(file, dataOffset)
                   .then(
@@ -708,7 +689,7 @@ export default function createFtpServer({
             // Could client connecton be waiting on passive port?
           } else {
             // but what if allowFileOverwrite, but not allowFileCreate?
-            openDataSocket().then(
+            getDataSocket().then(
               (readSocket: Readable) =>
                 fileStore(file, permissions.allowFileOverwrite, dataOffset)
                   .then(
@@ -848,78 +829,32 @@ export default function createFtpServer({
       MDTM: authenticatedMethods.SIZE,
     })
 
-    // LATER?:
-    // SPSV, LPSV, LPRT
-    // MLST (like MDTM and SIZE?)
-    // MFCT, MFF (like MFMT)
-    // ABOR, ACCT, NOOP, REIN, STAT
-    // APPE, CDUP, SMNT, STOU
+    // unimplemented:
+    //  SPSV, LPSV, LPRT
+    //  MLST (like MDTM and SIZE?)
+    //  MFCT, MFF (like MFMT)
+    //  ABOR, ACCT, NOOP, REIN, STAT
+    //  APPE, CDUP, SMNT, STOU
 
-    function resetSession() {
-      username = "nobody"
-      authenticated = false
-      permissions = undefined
+    function startPassiveDataServer() {
+      const addr = "0.0.0.0" // Server binds to default address, 0.0.0.0 or ipv6 ::
 
-      asciiTxfrMode = false
-      pbszReceived = false
-      protectedMode = false
-      dataOffset = 0
-
-      if (dataPort instanceof Server) {
-        dataPort.close()
-      }
-
-      dataPort = renameFileToFn = undefined
-    }
-
-    function setUser(credential: Credential) {
-      ;({ username } = credential)
-      authenticated = true
-      permissions = Object.fromEntries(
-        Object.entries(credential).filter((entry) =>
-          entry[0].startsWith("allow")
-        )
-      ) as Permissions
-      ;({
-        setFolder,
-        getFolder,
-
-        folderDelete,
-        folderCreate,
-        folderList,
-
-        fileStats,
-        fileDelete,
-        fileRetrieve,
-        fileStore,
-        fileRename,
-        fileSetAttributes,
-      } = storeFactory(credential, client))
-
-      emitter.emit("login", {
-        username,
-        clientInfo,
-        openSessions: clientSessions.size,
-      })
-    }
-
-    function startDataServer() {
       return new Promise<number>((resolve, reject) => {
-        // TODO: avoid port scanning & if minDataPort is not set, just listen on a random port?
         // 'maxConnections' is the size of a block of ports for incoming data connections
-        //  (consider non-stateful firewalls)
-        // if TCP and TLS ports are both listening, may need double maxConnections?
+        // TODO: avoid port scanning
+        // TODO: if TCP and TLS ports are both listening, may need double maxConnections?
+        // TODO: if minDataPort is not set, ignore maxConnections & just listen on a random port
         if (minDataPort > 0 && minDataPort < 65535) {
           return (function checkAvailablePort(port: number) {
             createServer()
+              .once("close", function () {
+                resolve(port)
+              })
               .once("error", function () {
                 if (port < minDataPort + maxConnections) {
                   return checkAvailablePort(++port) // recurse
                 }
                 reject(Error("exceeded maxConnections"))
-              })
-              .once("close", function () {
-                resolve(port)
               })
               .listen(port, function () {
                 this.close()
@@ -929,31 +864,34 @@ export default function createFtpServer({
 
         reject(Error("minDataPort out-of-range 1-65535"))
       }).then(async (port) => {
-        const dataPort = Object.assign(
-          "encrypted" in client && protectedMode
-            ? createSecureServer(await secureOptions, DataHandler)
-            : createServer(DataHandler),
-          {
-            _connectionQueue: [],
-            _resolveNext: undefined,
-            initConnection() {
-              this._connectionQueue.push(
-                new Promise<Socket>((resolve) => {
-                  this._resolveNext = resolve
-                })
-              )
-              return this
-            },
-            resolveConnection(socket?: Socket) {
-              this._resolveNext(socket)
-              this.initConnection()
-            },
-            nextConnection() {
-              return this._connectionQueue.shift()
-            },
-          }
-        ).initConnection() as ConnectionSource
+        debug(
+          `starting passive data server addr[${addr}] port[${port}] secure[${
+            "encrypted" in client && protectedMode
+          }]`
+        )
 
+        const dataPort =
+          "encrypted" in client && protectedMode
+            ? createSecureServer(await secureOptions, function () {
+                debug(`secure passive data connection established`)
+                this.on(
+                  "error",
+                  SessionErrorHandler("secure passive data connection")
+                ).on("close", () => {
+                  debug(`secure passive data connection has closed`)
+                })
+              })
+            : createServer(function () {
+                debug(`passive data connection established`)
+                this.on(
+                  "error",
+                  SessionErrorHandler("passive data connection")
+                ).on("close", () => {
+                  debug(`passive data connection has closed`)
+                })
+              })
+
+        dataPort.maxConnections = 1
         if (dataTimeout ?? timeout) {
           dataPort.on("connection", (socket) => {
             socket.setTimeout(dataTimeout ?? timeout, () => {
@@ -962,80 +900,79 @@ export default function createFtpServer({
           })
         }
 
-        dataPort.maxConnections = 1
+        // TODO: close server if no connection made within a reasonable time
+
+        // resolve the connection source when the server is successfully listening
         return new Promise<ConnectionSource>((resolve, reject) => {
-          dataPort.once("error", reject)
-          dataPort.listen(port, function () {
-            this.off("error", reject)
-            this.on("error", SessionErrorHandler("passive data port"))
-            resolve(this)
-          })
+          createConnectionSource(dataPort)
+            .on("error", reject)
+            .listen(port, function () {
+              debug(`passive data port listening`)
+              this.off("error", reject).on(
+                "error",
+                SessionErrorHandler("passive data port")
+              )
+              resolve(this)
+            })
         })
-
-        function DataHandler(socket: Socket) {
-          debug(`data connection established`)
-          socket.on("error", SessionErrorHandler("passive data connection"))
-          socket.on("close", () => {
-            debug(`data connection has closed`)
-          })
-
-          this.resolveConnection(socket)
-        }
       })
     }
 
-    function openDataSocket() {
+    function getDataSocket() {
       if (dataPort instanceof Server) {
         client.respond("150", "Awaiting passive connection")
+        return dataPort.next().then(({ value: socket, done }) => {
+          if (done) {
+            // the iterator is closed (due to error on listening port)
+            throw new Error("passive data port closed")
+          }
 
-        // TODO: reject if port is not accepting connections
-        // TODO: reject if no connection within a reasonable time
-        // cross fingers the client stays in sync!
-        return dataPort.nextConnection()
+          return socket
+        })
       }
 
       if (dataPort instanceof Object) {
         client.respond("150", "Opening data connection")
-        return new Promise((resolve, reject) => {
+
+        // resolve a successful connection
+        return new Promise<Socket>((resolve, reject) => {
           const { host: addr, port } = dataPort as TcpSocketConnectOpts
           debug(
-            `client data socket addr[${addr}] port[${port}] secure[${
+            `connecting client data socket addr[${addr}] port[${port}] secure[${
               "encrypted" in client && protectedMode
             }]`
           )
-          let socket = connect(dataPort as TcpSocketConnectOpts, async () => {
-            debug(`data connection established`)
+
+          const socket = connect(dataPort as TcpSocketConnectOpts, function () {
+            debug(`active data connection to client established`)
+            this.off("error", reject)
+
             if ("encrypted" in client && protectedMode) {
-              // connect FTPS and SFTP clients the same, negotiate TLS after
-              //  socket connection, i.e. it's exactly like tls.connect()
-              socket = new TLSSocket(socket, {
-                secureContext: await secureContext,
-                isServer: true,
-              })
-                .on("error", reject)
-                .on(
-                  "error",
-                  SessionErrorHandler("secured active data connection")
-                )
-                .on("close", () => {
-                  debug(`secured data connection has closed`)
+              secureContext.then((secureContext) => {
+                const socket = new TLSSocket(this, {
+                  secureContext,
+                  isServer: true,
                 })
 
-              debug(`data connection secured`)
+                // assume TLS negotiation is synchronous with constructor
+                debug(`secure active data connection established`)
+                resolve(socket)
+              }, reject)
+            } else {
+              resolve(this)
             }
+          }).on("error", reject)
+        }).then((socket) => {
+          if (dataTimeout ?? timeout) {
+            socket.setTimeout(dataTimeout ?? timeout, () => {
+              socket.destroy()
+            })
+          }
 
-            if (dataTimeout ?? timeout) {
-              socket.setTimeout(dataTimeout ?? timeout, () => {
-                socket.destroy()
-              })
-            }
-
-            resolve(socket)
-          })
-            .on("error", reject)
+          return socket
             .on("error", SessionErrorHandler("active data connection"))
             .on("close", () => {
-              debug(`data connection has closed`)
+              debug(`active data connection has closed`)
             })
         })
       }
@@ -1116,4 +1053,60 @@ export default function createFtpServer({
       })}`
     )
   }
+
+  // setup FTP, FTPS servers
+  let tcpServer: Server, tlsServer: Server
+  if (server) {
+    server.on("connection", FtpSessionHandler)
+  } else {
+    if (port) {
+      tcpServer = createServer(FtpSessionHandler).on("error", ErrorHandler)
+
+      tcpServer.maxConnections = maxConnections
+      tcpServer.listen(port, function () {
+        // LATER: emit an Event object
+        emitter.emit("listen", {
+          protocol: "tcp",
+          ...(this.address() as AddressInfo),
+          basefolder: localStoreFactory.basefolder,
+        })
+      })
+    }
+
+    if (securePort) {
+      secureOptions.then((secureOptions) => {
+        tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
+          "error",
+          ErrorHandler
+        )
+
+        tlsServer.maxConnections = maxConnections
+        tlsServer.listen(securePort, function () {
+          // LATER: emit an Event object
+          emitter.emit("listen", {
+            protocol: "tls",
+            ...(this.address() as AddressInfo),
+            basefolder: localStoreFactory.basefolder,
+          })
+        })
+      })
+    }
+  }
+
+  return Object.assign(emitter, {
+    close() {
+      for (const session of clientSessions) {
+        session.destroy()
+      }
+
+      tcpServer && tcpServer.close()
+      tlsServer && tlsServer.close()
+
+      localStoreFactory.cleanup?.()
+    },
+
+    reloadAuth(authOptions: AuthOptions) {
+      authenticate = authFactory(authOptions)
+    },
+  })
 }

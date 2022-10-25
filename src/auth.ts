@@ -1,14 +1,7 @@
-import { Socket } from "node:net"
-import { AbsolutePath, RelativePath } from "./store.js"
+import type { Socket } from "node:net"
+import type { AbsolutePath, RelativePath } from "./store.js"
 
-export enum LoginType {
-  None,
-  Anonymous,
-  Password,
-  NoPassword,
-}
-
-export enum permissions {
+enum permissions {
   FileCreate = "FileCreate",
   FileRetrieve = "FileRetrieve",
   FileOverwrite = "FileOverwrite",
@@ -17,6 +10,15 @@ export enum permissions {
   FolderDelete = "FolderDelete",
   FolderCreate = "FolderCreate",
 }
+
+type Permissions = {
+  -readonly [k in keyof typeof permissions as `allow${k & string}`]: boolean
+}
+
+export type Credential = {
+  username: string
+  basefolder?: AbsolutePath | RelativePath | string
+} & Permissions
 
 type AnonymousPermissions = {
   -readonly [k in keyof typeof permissions as `allowAnonymous${k &
@@ -27,132 +29,136 @@ type UserPermissions = {
   -readonly [k in keyof typeof permissions as `allowUser${k &
     string}`]?: boolean
 }
-type UserBaseFolder = AbsolutePath | RelativePath | string
+
 type UserOptions = {
   username: string
   password?: string
+  requireSecure?: boolean
+  trustedClientAddr?: string | RegExp
   allowLoginWithoutPassword?: boolean
-  allowFromAddrWithoutPassword?: string
-  basefolder?: UserBaseFolder
+
+  basefolder?: AbsolutePath | RelativePath | string
 } & UserPermissions
 
 export type AuthOptions = {
   allowAnonymousLogin?: boolean
+  requireAnonymousSecure?: boolean
+
+  requireSecure?: boolean
+  trustClientAddr?: boolean
+
   username?: string
   password?: string
   allowLoginWithoutPassword?: boolean
-  allowFromAddrWithoutPassword?: boolean
+  trustedClientAddr?: string | RegExp
+
   user?: UserOptions[] // why iterate an array when could map {[username]: credential}
 } & AnonymousPermissions &
   UserPermissions
 
-export type Permissions = {
-  -readonly [k in keyof typeof permissions as `allow${k & string}`]: boolean
-}
-
-export type Credential = {
-  username: string
-  basefolder?: UserBaseFolder
-} & Permissions
+export type AuthFactory = (options: AuthOptions) => AuthFunction
 
 export type AuthFunction = (
   client: Socket,
-  user: string,
-  pass?: string
-) => Promise<Credential>
+  user: string
+) => Promise<Credential | ((token: string) => Promise<Credential>)>
 
-export type AuthFactory = (options: AuthOptions) => AuthFunction
-
-export default function authScheme({
-  user: users,
-  allowAnonymousLogin,
-  username: defaultUsername,
-  password: defaultPassword,
-  allowLoginWithoutPassword,
-  allowFromAddrWithoutPassword,
-  ...defaults
-}: AuthOptions): AuthFunction {
-  const defaultPrivilege = Object.fromEntries(
-      Object.keys(permissions).map((k) => [
-        `allow${k}`,
-        defaults[`allow${k}` as keyof typeof defaults] ?? false,
-      ])
-    ) as Permissions,
-    getCredentialForAnon = (password: string) =>
-      ({
-        ...defaultPrivilege,
-        ...Object.fromEntries(
-          Object.entries({ ...defaults, username: `anon(${password})` })
-            .filter(([key]) => !key.startsWith("allowUser"))
-            .map(([key, value]) => [
-              key.replace(/^allowAnonymous/, "allow"),
-              value,
-            ])
-        ),
-      } as Credential),
-    getCredentialForUser = ({
-      password: _,
-      allowLoginWithoutPassword: __,
-      allowFromAddrWithoutPassword: ___,
-      ...user
-    }: UserOptions) =>
-      ({
-        ...defaultPrivilege,
-        ...Object.fromEntries(
-          Object.entries({ ...defaults, ...user })
-            .filter(([key]) => !key.startsWith("allowAnonymous"))
-            .map(([key, value]) => [key.replace(/^allowUser/, "allow"), value])
-        ),
-      } as Credential)
-
-  return function userAuthenticate(
-    client: Socket,
-    username: string,
-    password?: string
-  ) {
-    return new Promise((resolve, reject) => {
-      if (username === "anonymous") {
-        if (allowAnonymousLogin) {
-          if (password) {
-            resolve(getCredentialForAnon(password))
-          } else {
-            reject(LoginType.Anonymous)
-          }
-        }
-      } else if (users?.length > 0) {
-        const user = users.find((user) => user.username === username)
-        if (user) {
-          if (
-            (allowLoginWithoutPassword && user.allowLoginWithoutPassword) ||
-            (allowFromAddrWithoutPassword &&
-              client.remoteAddress.match(user.allowFromAddrWithoutPassword))
-          ) {
-            resolve(getCredentialForUser(user))
-          } else if (password) {
-            if (password === user.password) {
-              resolve(getCredentialForUser(user))
-            }
-          } else {
-            reject(LoginType.Password)
-          }
-        }
-      } else if (username === defaultUsername) {
-        if (allowLoginWithoutPassword === true) {
-          resolve(getCredentialForUser({ username }))
-        } else if (password) {
-          if (password === defaultPassword) {
-            resolve(getCredentialForUser({ username }))
-          }
-        } else {
-          reject(LoginType.Password)
-        }
-      }
-
-      reject(LoginType.None)
-    })
-  }
+export enum LoginError {
+  None,
+  Secure,
+  Password,
 }
 
-/** OAuth authentication for FTP:
- * most sensible is the Password grant (FTP does not provide redirect, e.g. the auth-code grant)
- */
+export default function authScheme({
+  allowAnonymousLogin,
+  requireAnonymousSecure,
+  user: users,
+  ...defaults
+}: AuthOptions): AuthFunction {
+  const defaultUserPermissions = Object.fromEntries(
+    Object.keys(permissions).map((k) => [
+      `allow${k}`,
+      defaults[`allowUser${k}` as keyof typeof defaults] ?? false,
+    ])
+  ) as Permissions
+
+  function getUser(username: string) {
+    if (users) {
+      return users.find((user) => user.username === username)
+    }
+
+    if (defaults.username === username) {
+      return defaults as UserOptions
+    }
+  }
+
+  function getUserCredential({ username, basefolder, ...user }: UserOptions) {
+    return {
+      ...defaultUserPermissions,
+      ...Object.fromEntries(
+        Object.entries({ ...defaults, ...user })
+          .filter(([key]) => key.startsWith("allowUser"))
+          .map(([key, value]) => [key.replace(/^allowUser/, "allow"), value])
+      ),
+      username,
+      ...(basefolder && { basefolder }),
+    } as Credential
+  }
+
+  function getAnonCredential(email: string) {
+    return Promise.resolve({
+      ...defaultUserPermissions,
+      ...Object.fromEntries(
+        Object.entries(defaults)
+          .filter(([key]) => key.startsWith("allowAnonymous"))
+          .map(([key, value]) => [
+            key.replace(/^allowAnonymous/, "allow"),
+            value,
+          ])
+      ),
+      username: `anon(${email})`,
+    } as Credential)
+  }
+
+  return function authenticate(client: Socket, username: string) {
+    const user = getUser(username)
+    if (user) {
+      if (
+        (defaults.requireSecure || user.requireSecure) &&
+        !("encrypted" in client)
+      ) {
+        return Promise.reject(LoginError.Secure)
+      }
+
+      if (
+        (defaults.allowLoginWithoutPassword &&
+          user.allowLoginWithoutPassword) ||
+        (defaults.trustClientAddr &&
+          client.remoteAddress.match(user.trustedClientAddr))
+      ) {
+        return Promise.resolve(getUserCredential(user))
+      }
+
+      return Promise.resolve(function authenticate(token: string) {
+        if (token && token === user.password) {
+          return Promise.resolve(getUserCredential(user))
+        }
+
+        return Promise.reject(LoginError.Password)
+      })
+    }
+
+    if (allowAnonymousLogin && username === "anonymous") {
+      if (
+        (defaults.requireSecure || requireAnonymousSecure) &&
+        !("encrypted" in client)
+      ) {
+        return Promise.reject(LoginError.Secure)
+      }
+
+      return Promise.resolve(getAnonCredential)
+    }
+
+    return Promise.reject(LoginError.None)
+  }
+}

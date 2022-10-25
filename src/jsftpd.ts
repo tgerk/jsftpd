@@ -27,8 +27,7 @@ import type { Readable, Writable } from "node:stream"
 import internalAuth, {
   AuthFactory,
   AuthOptions,
-  LoginType,
-  Permissions,
+  LoginError,
   Credential,
 } from "./auth.js"
 
@@ -78,15 +77,20 @@ export default function createFtpServer({
   store,
   ...authOptions
 }: ServerOptions = {}) {
-  // track client sessions
+  // track active and cumulative client sessions
   let clientCounter = 0
   const clientSessions: Set<Socket> = new Set()
 
-  const emitter = new EventEmitter()
+  const emitter = server ?? new EventEmitter()
 
   // compose auth and storage backend handler factories
   const authFactory = auth?.(internalAuth) ?? internalAuth
   let authenticate = authFactory(authOptions)
+  Object.assign(emitter, {
+    reloadAuth(authOptions: AuthOptions) {
+      authenticate = authFactory(authOptions)
+    },
+  })
 
   const localStoreFactory = localBackend(basefolder),
     storeFactory: StoreFactory = (() => {
@@ -131,12 +135,7 @@ export default function createFtpServer({
       client.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
     }:${client.remotePort}]`
     Object.assign(client, {
-      respond: function respond(
-        this: Socket,
-        code: string,
-        message: string,
-        delimiter = " "
-      ) {
+      respond(this: Socket, code: string, message: string, delimiter = " ") {
         log(`<<< ${code} ${message}`)
         this.write(`${code}${delimiter}${message}\r\n`)
       },
@@ -159,8 +158,8 @@ export default function createFtpServer({
         // LATER: emit an Event object
         authenticated &&
           emitter.emit("logoff", {
-            username,
             clientInfo,
+            username: authenticated.username,
             openSessions: clientSessions.size - 1,
           })
       })
@@ -170,13 +169,9 @@ export default function createFtpServer({
     client.respond("220", "Welcome")
     debug(`established FTP connection`)
 
-    // setup session
-    let authenticated = false,
-      permissions: Permissions,
-      username = "nobody"
-
-    // implement passive data server as an async iterator for incoming connections (as by Deno)
-    let dataPort: TcpSocketConnectOpts | ConnectionSource
+    // session state
+    let authUser: (token: string) => Promise<Credential>,
+      authenticated: Credential
 
     let setFolder: Store["setFolder"],
       getFolder: Store["getFolder"],
@@ -188,35 +183,33 @@ export default function createFtpServer({
       fileRetrieve: Store["fileRetrieve"],
       fileStore: Store["fileStore"],
       fileRename: Store["fileRename"],
-      fileSetAttributes: Store["fileSetAttributes"],
-      renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
+      fileSetAttributes: Store["fileSetAttributes"]
 
     let asciiTxfrMode = false,
       pbszReceived = false,
       protectedMode = false,
       dataOffset = 0
 
+    // implement passive data server as an async iterator for incoming connections (as by Deno)
+    let dataPort: TcpSocketConnectOpts | ConnectionSource
+    let renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
+
     function resetSession() {
-      authenticated = false
-      permissions = undefined
-      username = "nobody"
+      authUser = null
+      authenticated = null
 
       asciiTxfrMode = false
       pbszReceived = false
       protectedMode = false
       dataOffset = 0
       ;(dataPort as ConnectionSource)?.close?.()
-      dataPort = renameFileToFn = undefined
+      dataPort = null
+      renameFileToFn = null
     }
 
     function setUser(credential: Credential) {
-      authenticated = true
-      permissions = Object.fromEntries(
-        Object.entries(credential).filter((entry) =>
-          entry[0].startsWith("allow")
-        )
-      ) as Permissions
-      ;({ username } = credential)
+      authUser = null
+      authenticated = credential
       ;({
         setFolder,
         getFolder,
@@ -234,8 +227,8 @@ export default function createFtpServer({
       } = storeFactory(credential, client))
 
       emitter.emit("login", {
-        username,
         clientInfo,
+        username: authenticated.username,
         openSessions: clientSessions.size,
       })
     }
@@ -244,36 +237,44 @@ export default function createFtpServer({
         USER(_: string, user: string) {
           resetSession()
           authenticate(client, user)
-            .then((user) => {
-              setUser(user)
+            .then((credentialOrAuth) => {
+              if (credentialOrAuth instanceof Function) {
+                authUser = credentialOrAuth
+                client.respond("331", `Password required for ${user}`)
+                // LATER: extra data for OAUTH, ID provider link?
+                return
+              }
+
+              setUser(credentialOrAuth)
               client.respond("232", "User logged in")
             })
-            .catch((loginType) => {
-              // password required
-              switch (loginType) {
-                case LoginType.Anonymous:
-                case LoginType.Password:
-                default:
-                  username = user
-                  client.respond("331", `Password required for ${username}`)
+            .catch((loginError) => {
+              switch (loginError) {
+                case LoginError.Secure:
+                  client.respond("530", "Session not secure")
                   break
-                case LoginType.None:
+
+                case LoginError.None:
+                default:
                   client.respond("530", "Not logged in")
                   break
               }
             })
         },
 
-        PASS(_: string, password: string) {
-          authenticate(client, username, password)
-            .then((user) => {
-              setUser(user)
-              client.respond("230", "Logged on")
-            })
-            .catch(() => {
-              client.respond("530", "Username or password incorrect")
-              client.end()
-            })
+        PASS(_: string, token: string) {
+          if (!authUser) {
+            client.respond("503", "USER missing")
+          } else
+            authUser(token)
+              .then((credential: Credential) => {
+                setUser(credential)
+                client.respond("230", "Logged on")
+                // LATER: extra data for OAUTH, refresh token?
+              })
+              .catch(() => {
+                client.respond("530", "Username or password incorrect")
+              })
         },
 
         AUTH(_: string, auth: string) {
@@ -299,20 +300,20 @@ export default function createFtpServer({
               client.respond("504", `Unsupported auth type ${auth}`)
           }
         },
-      },
-      authenticatedMethods = {
+
         QUIT() {
           client.respond("221", "Goodbye")
           client.end()
 
           // LATER: emit an Event object
           emitter.emit("logoff", {
-            username,
             clientInfo,
+            username: authenticated.username,
             openSessions: clientSessions.size - 1,
           })
         },
-
+      },
+      authenticatedMethods = {
         CLNT() {
           client.respond("200", "Don't care")
         },
@@ -504,7 +505,7 @@ export default function createFtpServer({
         },
 
         RMD(cmd: string, folder: string) {
-          if (!permissions.allowFolderDelete || folder === "/") {
+          if (!authenticated.allowFolderDelete || folder === "/") {
             client.respond("550", "Permission denied")
           } else {
             folderDelete(folder).then(
@@ -528,7 +529,7 @@ export default function createFtpServer({
         },
 
         MKD(cmd: string, folder: string) {
-          if (!permissions.allowFolderCreate) {
+          if (!authenticated.allowFolderCreate) {
             client.respond("550", "Permission denied")
           } else {
             folderCreate(folder).then(
@@ -570,7 +571,7 @@ export default function createFtpServer({
         },
 
         DELE(cmd: string, file: string) {
-          if (!permissions.allowFileDelete) {
+          if (!authenticated.allowFileDelete) {
             client.respond("550", "Permission denied")
           } else {
             fileDelete(file).then(
@@ -615,7 +616,7 @@ export default function createFtpServer({
         },
 
         RETR(cmd: string, file: string) {
-          if (!permissions.allowFileRetrieve) {
+          if (!authenticated.allowFileRetrieve) {
             client.respond("550", `Transfer failed "${file}"`)
             // Could client connecton be waiting on passive port?
           } else {
@@ -652,8 +653,8 @@ export default function createFtpServer({
 
                           // LATER: emit an Event object
                           emitter.emit("download", {
-                            username,
                             clientInfo,
+                            username: authenticated.username,
                             file: path.join(getFolder(), file),
                           })
                         })
@@ -684,14 +685,17 @@ export default function createFtpServer({
         },
 
         STOR(cmd: string, file: string) {
-          if (!permissions.allowFileOverwrite && !permissions.allowFileCreate) {
+          if (
+            !authenticated.allowFileOverwrite &&
+            !authenticated.allowFileCreate
+          ) {
             client.respond("550", `Transfer failed "${file}"`)
             // Could client connecton be waiting on passive port?
           } else {
             // but what if allowFileOverwrite, but not allowFileCreate?
             getDataSocket().then(
               (readSocket: Readable) =>
-                fileStore(file, permissions.allowFileOverwrite, dataOffset)
+                fileStore(file, authenticated.allowFileOverwrite, dataOffset)
                   .then(
                     (writeStream) => {
                       readSocket.on("error", (error: NodeJS.ErrnoException) => {
@@ -722,8 +726,8 @@ export default function createFtpServer({
 
                           // LATER: emit an Event object
                           emitter.emit("upload", {
-                            username,
                             clientInfo,
+                            username: authenticated.username,
                             file: path.join(getFolder(), file),
                           })
                         })
@@ -754,7 +758,7 @@ export default function createFtpServer({
         },
 
         RNFR(_: string, file: string) {
-          if (!permissions.allowFileRename) {
+          if (!authenticated.allowFileRename) {
             client.respond("550", "Permission denied")
           } else {
             fileRename(file).then(
@@ -770,20 +774,20 @@ export default function createFtpServer({
         },
 
         RNTO(cmd: string, file: string) {
-          if (!permissions.allowFileRename) {
+          if (!authenticated.allowFileRename) {
             client.respond("550", "Permission denied")
           } else if (!renameFileToFn) {
             client.respond("503", "RNFR missing")
           } else {
-            renameFileToFn(file, permissions.allowFileOverwrite)
+            renameFileToFn(file, authenticated.allowFileOverwrite)
               .then(
                 () => {
                   client.respond("250", "File renamed successfully")
 
                   // LATER: emit an Event object
                   emitter.emit("rename", {
-                    username,
                     clientInfo,
+                    username: authenticated.username,
                     fileFrom: path.join("/", renameFileToFn.fromFile),
                     fileTo: path.join(getFolder(), file),
                   })
@@ -823,6 +827,7 @@ export default function createFtpServer({
         },
       }
     Object.assign(authenticatedMethods, {
+      QUIT: preAuthMethods.QUIT,
       RMDA: authenticatedMethods.RMD,
       MLSD: authenticatedMethods.LIST,
       NLST: authenticatedMethods.LIST,
@@ -981,22 +986,21 @@ export default function createFtpServer({
     }
 
     function CmdHandler(buf: Buffer) {
-      const data = buf.toString(),
-        [cmd, ...args] = data.trim().split(/\s+/)
+      const [cmd, ...args] = buf.toString().trim().split(/\s+/)
       log(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : args.join(" ")}]`)
 
       try {
         if (cmd in authenticatedMethods) {
-          if (authenticated) {
-            authenticatedMethods[cmd as keyof typeof authenticatedMethods].call(
-              this,
-              cmd,
-              ...args
-            )
-          } else {
+          if (!authenticated) {
             client.respond("530", "Not logged in")
-            client.end()
+            return
           }
+
+          authenticatedMethods[cmd as keyof typeof authenticatedMethods].call(
+            this,
+            cmd,
+            ...args
+          )
         } else if (cmd in preAuthMethods) {
           preAuthMethods[cmd as keyof typeof preAuthMethods].call(
             this,
@@ -1018,7 +1022,7 @@ export default function createFtpServer({
       return function error(error: NodeJS.ErrnoException) {
         // LATER: emit an Event object
         emitter.emit(
-          "warn", // don't say "error" -- Jest somehow detects "error" events that don't have a handler
+          "warn", // Jest fails on unhandled error events
           `${new Date().toISOString()} ${clientInfo}-${socketType} error ${inspect(
             error,
             {
@@ -1042,7 +1046,7 @@ export default function createFtpServer({
     }
   }
 
-  function ErrorHandler(error: NodeJS.ErrnoException) {
+  function ServerErrorHandler(error: NodeJS.ErrnoException) {
     // LATER: emit an Event object
     emitter.emit(
       "error",
@@ -1054,59 +1058,54 @@ export default function createFtpServer({
     )
   }
 
+  if (server) {
+    return server.on("connection", FtpSessionHandler)
+  }
+
   // setup FTP, FTPS servers
   let tcpServer: Server, tlsServer: Server
-  if (server) {
-    server.on("connection", FtpSessionHandler)
-  } else {
-    if (port) {
-      tcpServer = createServer(FtpSessionHandler).on("error", ErrorHandler)
+  if (port) {
+    tcpServer = createServer(FtpSessionHandler).on("error", ServerErrorHandler)
 
-      tcpServer.maxConnections = maxConnections
-      tcpServer.listen(port, function () {
+    tcpServer.maxConnections = maxConnections
+    tcpServer.listen(port, function () {
+      // LATER: emit an Event object
+      emitter.emit("listen", {
+        protocol: "tcp",
+        ...(this.address() as AddressInfo),
+        basefolder: localStoreFactory.basefolder,
+      })
+    })
+  }
+
+  if (securePort) {
+    secureOptions.then((secureOptions) => {
+      tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
+        "error",
+        ServerErrorHandler
+      )
+
+      tlsServer.maxConnections = maxConnections
+      tlsServer.listen(securePort, function () {
         // LATER: emit an Event object
         emitter.emit("listen", {
-          protocol: "tcp",
+          protocol: "tcp+tls",
           ...(this.address() as AddressInfo),
           basefolder: localStoreFactory.basefolder,
         })
       })
-    }
-
-    if (securePort) {
-      secureOptions.then((secureOptions) => {
-        tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
-          "error",
-          ErrorHandler
-        )
-
-        tlsServer.maxConnections = maxConnections
-        tlsServer.listen(securePort, function () {
-          // LATER: emit an Event object
-          emitter.emit("listen", {
-            protocol: "tls",
-            ...(this.address() as AddressInfo),
-            basefolder: localStoreFactory.basefolder,
-          })
-        })
-      })
-    }
+    })
   }
 
   return Object.assign(emitter, {
     close() {
-      for (const session of clientSessions) {
-        session.destroy()
-      }
-
-      tcpServer && tcpServer.close()
-      tlsServer && tlsServer.close()
+      tcpServer?.close()
+      tlsServer?.close()
 
       localStoreFactory.cleanup?.()
     },
 
-    reloadAuth(authOptions: AuthOptions) {
-      authenticate = authFactory(authOptions)
-    },
+    server: tcpServer,
+    secureServer: tlsServer,
   })
 }

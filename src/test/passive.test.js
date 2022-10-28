@@ -1,7 +1,7 @@
 import { jest } from "@jest/globals"
 
-import createFtpServer from "./jsftpd.js"
-import { getCmdPortTCP, formatPort, ExpectSocket } from "./util/tests.js"
+import createFtpServer from "../jsftpd.js"
+import { getCmdPortTCP, formatPort, ExpectSocket } from "./utils.js"
 
 jest.setTimeout(5000)
 

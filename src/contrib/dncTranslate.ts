@@ -8,7 +8,7 @@
 import path from "path"
 import { Socket } from "net"
 import { Credential } from "../auth.js"
-import { StoreFactory, Store, StoreOptions, Path } from "../store.js"
+import { StoreFactory, Store, LocalStoreOptions, Path } from "../store.js"
 
 // present names in on-disk ####.nc format as DNC-style O####
 function transformOutbound(file: Path): typeof file {
@@ -27,11 +27,11 @@ export default function composableFactory(
   baseFactory: StoreFactory
 ): StoreFactory {
   return function dncTranslatingFactory(
-    user: Credential,
     client: Socket,
-    options: StoreOptions = {}
+    user: Credential,
+    options: LocalStoreOptions = {}
   ): Store {
-    const handlers = baseFactory(user, client, {
+    const handlers = baseFactory(client, user, {
       ...options,
       resolveFilename: transformInbound,
     })

@@ -7,7 +7,7 @@
  */
 
 import { EventEmitter } from "node:events"
-import path from "node:path"
+import { mkdtempSync, rmSync, statSync } from "node:fs"
 import { connect, createServer, Server } from "node:net"
 import type {
   Socket,
@@ -15,26 +15,28 @@ import type {
   ListenOptions,
   TcpSocketConnectOpts,
 } from "node:net"
+import { join as joinPath, resolve as resolvePath } from "node:path"
+import type { Readable, Writable } from "node:stream"
 import {
   TLSSocket,
   createServer as createSecureServer,
   createSecureContext,
 } from "node:tls"
-import type { SecureContextOptions } from "node:tls"
+import type { SecureContextOptions, Server as TlsServer } from "node:tls"
 import { inspect, format } from "node:util"
-import type { Readable, Writable } from "node:stream"
 
-import internalAuth, {
+import internalAuthFactory, {
   AuthFactory,
   AuthOptions,
   LoginError,
   Credential,
 } from "./auth.js"
 
-import localBackend, {
+import localStoreFactory, {
   Store,
   StoreFactory,
   Errors as StoreErrors,
+  RelativePath,
 } from "./store.js"
 import type { AbsolutePath } from "./store.js"
 
@@ -56,12 +58,38 @@ export type ServerOptions = {
   timeout?: number
   dataTimeout?: number
   tls?: SecureContextOptions
-  basefolder?: AbsolutePath
-  auth?: ComposableAuthFactory
-  store?: ComposableStoreFactory | ComposableStoreFactory[]
+  basefolder?: AbsolutePath | RelativePath
+  auth?: ComposableAuthFactory | ComposableAuthFactory[] // most-significant first
+  store?: ComposableStoreFactory | ComposableStoreFactory[] // most-significant first
 } & AuthOptions
 
-export type FtpServer = ReturnType<typeof createFtpServer>
+interface FtpServer2 extends EventEmitter {
+  server: Server
+  secureServer: TlsServer
+  close(callback?: (err?: Error) => void): this
+  on(
+    event: "listening",
+    listener: (
+      info: { protocol: string; basefolder: string } & AddressInfo
+    ) => void
+  ): this
+}
+
+interface FtpServerEvents {
+  on(event: "login", listener: () => void): this
+  on(event: "logoff", listener: () => void): this
+  on(event: "upload", listener: () => void): this
+  on(event: "download", listener: () => void): this
+  on(event: "rename", listener: () => void): this
+  on(event: "trace", listener: () => void): this
+  on(event: "debug", listener: () => void): this
+  on(event: "session-error", listener: () => void): this
+  on(event: "server-error", listener: () => void): this
+}
+
+export type FtpServer = (Server | FtpServer2) & {
+  reloadAuth: (options: AuthOptions) => void
+} & FtpServerEvents
 
 export default function createFtpServer({
   server,
@@ -76,33 +104,7 @@ export default function createFtpServer({
   auth,
   store,
   ...authOptions
-}: ServerOptions = {}) {
-  // track active and cumulative client sessions
-  let clientCounter = 0
-  const clientSessions: Set<Socket> = new Set()
-
-  const emitter = server ?? new EventEmitter()
-
-  // compose auth and storage backend handler factories
-  const authFactory = auth?.(internalAuth) ?? internalAuth
-  let authenticate = authFactory(authOptions)
-  Object.assign(emitter, {
-    reloadAuth(authOptions: AuthOptions) {
-      authenticate = authFactory(authOptions)
-    },
-  })
-
-  const localStoreFactory = localBackend(basefolder),
-    storeFactory: StoreFactory = (() => {
-      if (store) {
-        if (store instanceof Array) {
-          return store.reduce((y, f) => f(y), localStoreFactory)
-        }
-        return store(localStoreFactory)
-      }
-      return localStoreFactory
-    })()
-
+}: ServerOptions = {}): FtpServer {
   tlsOptions = {
     // rejectUnauthorized: false, // enforce CA trust
     honorCipherOrder: true,
@@ -126,6 +128,134 @@ export default function createFtpServer({
     })(),
     secureContext = secureOptions.then(createSecureContext)
 
+  // create (and clean up) the default basefolder, if needed
+  const ftpRoot = ((
+    folder: AbsolutePath | RelativePath
+  ): AbsolutePath & { cleanup?: () => void } => {
+    if (!folder) {
+      const tmpFolder = mkdtempSync(resolvePath("ftproot-")) as AbsolutePath
+      return Object.assign(tmpFolder, {
+        cleanup() {
+          rmSync(tmpFolder.toString(), { force: true, recursive: true })
+        },
+      })
+    }
+
+    const absFolder = resolvePath(folder) as AbsolutePath
+    try {
+      if (!statSync(absFolder)?.isDirectory()) {
+        throw Object.assign(Error(`Base folder must be directory`), {
+          code: StoreErrors.ENOTDIR,
+          value: absFolder,
+        })
+      }
+
+      return absFolder
+    } catch {
+      throw Object.assign(Error(`Base folder must exist`), {
+        code: StoreErrors.ENOTDIR,
+        value: absFolder,
+      })
+    }
+  })(basefolder)
+
+  // compose auth and storage backend handler factories
+  const authFactory = ((authFactory) => {
+    if (auth instanceof Array) {
+      return auth.reduceRight((y, f) => f(y), authFactory)
+    }
+
+    if (auth instanceof Function) {
+      return auth(authFactory)
+    }
+
+    return authFactory
+  })(internalAuthFactory)
+
+  const storeFactory = ((storeFactory) => {
+    if (store instanceof Array) {
+      return store.reduceRight((y, f) => f(y), storeFactory)
+    }
+
+    if (store instanceof Function) {
+      return store(storeFactory)
+    }
+
+    return storeFactory
+  })(localStoreFactory)
+
+  let authenticate = authFactory(authOptions)
+  const reloadAuth = (authOptions: AuthOptions) => {
+    authenticate = authFactory(authOptions)
+  }
+
+  // track active and cumulative client sessions
+  let clientCounter = 0
+  const clientSessions: Set<Socket> = new Set()
+
+  const emitter = server ?? new EventEmitter()
+  if (server) {
+    server.on("connection", FtpSessionHandler)
+    if (ftpRoot.cleanup) {
+      server.on("close", ftpRoot.cleanup)
+    }
+
+    return Object.assign(server, {
+      reloadAuth,
+    })
+  }
+
+  // setup FTP, FTPS servers
+  let tcpServer: Server, tlsServer: TlsServer
+  if (port) {
+    tcpServer = createServer(FtpSessionHandler).on("error", ServerErrorHandler)
+
+    tcpServer.maxConnections = maxConnections
+    tcpServer.listen(port, function () {
+      emitter.emit("listening", {
+        protocol: "tcp",
+        ...(this.address() as AddressInfo),
+        basefolder: ftpRoot,
+      })
+    })
+  }
+
+  if (securePort) {
+    secureOptions.then((secureOptions) => {
+      tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
+        "error",
+        ServerErrorHandler
+      )
+
+      tlsServer.maxConnections = maxConnections
+      tlsServer.listen(securePort, function () {
+        emitter.emit("listening", {
+          protocol: "tcp+tls",
+          ...(this.address() as AddressInfo),
+          basefolder: ftpRoot,
+        })
+      })
+    })
+  }
+
+  if (ftpRoot.cleanup) {
+    tcpServer?.on("close", ftpRoot.cleanup)
+    tlsServer?.on("close", ftpRoot.cleanup)
+  }
+
+  return Object.assign(emitter, {
+    close(callback?: (err?: Error) => void) {
+      tcpServer?.close(callback)
+      tlsServer?.close(callback)
+      return this
+    },
+
+    reloadAuth,
+
+    server: tcpServer,
+    secureServer: tlsServer,
+  })
+
   function FtpSessionHandler(
     client: Socket & {
       respond?: (code: string, message: string, delimiter?: string) => void
@@ -136,7 +266,7 @@ export default function createFtpServer({
     }:${client.remotePort}]`
     Object.assign(client, {
       respond(this: Socket, code: string, message: string, delimiter = " ") {
-        log(`<<< ${code} ${message}`)
+        trace(`<<< ${code} ${message}`)
         this.write(`${code}${delimiter}${message}\r\n`)
       },
     })
@@ -149,21 +279,6 @@ export default function createFtpServer({
         debug(`FTP connection closed`)
       })
       .on("data", CmdHandler)
-
-    if (timeout) {
-      client.setTimeout(timeout, () => {
-        client.respond("221", "Goodbye")
-        client.end()
-
-        // LATER: emit an Event object
-        authenticated &&
-          emitter.emit("logoff", {
-            clientInfo,
-            username: authenticated.username,
-            openSessions: clientSessions.size - 1,
-          })
-      })
-    }
 
     clientSessions.add(client)
     client.respond("220", "Welcome")
@@ -193,45 +308,6 @@ export default function createFtpServer({
     // implement passive data server as an async iterator for incoming connections (as by Deno)
     let dataPort: TcpSocketConnectOpts | ConnectionSource
     let renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
-
-    function resetSession() {
-      authUser = null
-      authenticated = null
-
-      asciiTxfrMode = false
-      pbszReceived = false
-      protectedMode = false
-      dataOffset = 0
-      ;(dataPort as ConnectionSource)?.close?.()
-      dataPort = null
-      renameFileToFn = null
-    }
-
-    function setUser(credential: Credential) {
-      authUser = null
-      authenticated = credential
-      ;({
-        setFolder,
-        getFolder,
-
-        folderDelete,
-        folderCreate,
-        folderList,
-
-        fileStats,
-        fileDelete,
-        fileRetrieve,
-        fileStore,
-        fileRename,
-        fileSetAttributes,
-      } = storeFactory(credential, client))
-
-      emitter.emit("login", {
-        clientInfo,
-        username: authenticated.username,
-        openSessions: clientSessions.size,
-      })
-    }
 
     const preAuthMethods = {
         USER(_: string, user: string) {
@@ -272,8 +348,15 @@ export default function createFtpServer({
                 client.respond("230", "Logged on")
                 // LATER: extra data for OAUTH, refresh token?
               })
-              .catch(() => {
-                client.respond("530", "Username or password incorrect")
+              .catch((loginError) => {
+                switch (loginError) {
+                  case LoginError.Password:
+                    client.respond("530", "Username or password incorrect")
+                    break
+
+                  default:
+                    throw loginError
+                }
               })
         },
 
@@ -305,12 +388,12 @@ export default function createFtpServer({
           client.respond("221", "Goodbye")
           client.end()
 
-          // LATER: emit an Event object
-          emitter.emit("logoff", {
-            clientInfo,
-            username: authenticated.username,
-            openSessions: clientSessions.size - 1,
-          })
+          authenticated &&
+            emitter.emit("logoff", {
+              clientInfo,
+              username: authenticated.username,
+              openSessions: clientSessions.size - 1,
+            })
         },
       },
       authenticatedMethods = {
@@ -557,7 +640,7 @@ export default function createFtpServer({
               socket.end(listing + "\r\n") // FileZilla has a cow, "TLS connection was non-properly terminated" some half-open problem?
               client.respond(
                 "226",
-                `Successfully transferred "${path.resolve(
+                `Successfully transferred "${resolvePath(
                   getFolder(),
                   folder ?? ""
                 )}"`
@@ -651,11 +734,10 @@ export default function createFtpServer({
                             `Successfully transferred "${file}"`
                           )
 
-                          // LATER: emit an Event object
                           emitter.emit("download", {
                             clientInfo,
                             username: authenticated.username,
-                            file: path.join(getFolder(), file),
+                            file: joinPath(getFolder(), file),
                           })
                         })
 
@@ -724,11 +806,10 @@ export default function createFtpServer({
                             `Successfully transferred "${file}"`
                           )
 
-                          // LATER: emit an Event object
                           emitter.emit("upload", {
                             clientInfo,
                             username: authenticated.username,
-                            file: path.join(getFolder(), file),
+                            file: joinPath(getFolder(), file),
                           })
                         })
 
@@ -784,12 +865,11 @@ export default function createFtpServer({
                 () => {
                   client.respond("250", "File renamed successfully")
 
-                  // LATER: emit an Event object
                   emitter.emit("rename", {
                     clientInfo,
                     username: authenticated.username,
-                    fileFrom: path.join("/", renameFileToFn.fromFile),
-                    fileTo: path.join(getFolder(), file),
+                    fileFrom: joinPath("/", renameFileToFn.fromFile),
+                    fileTo: joinPath(getFolder(), file),
                   })
                 },
                 (error) => {
@@ -840,6 +920,49 @@ export default function createFtpServer({
     //  MFCT, MFF (like MFMT)
     //  ABOR, ACCT, NOOP, REIN, STAT
     //  APPE, CDUP, SMNT, STOU
+
+    if (timeout) {
+      client.setTimeout(timeout, preAuthMethods.QUIT)
+    }
+
+    function resetSession() {
+      authUser = null
+      authenticated = null
+
+      asciiTxfrMode = false
+      pbszReceived = false
+      protectedMode = false
+      dataOffset = 0
+      ;(dataPort as ConnectionSource)?.close?.()
+      dataPort = null
+      renameFileToFn = null
+    }
+
+    function setUser(credential: Credential) {
+      authUser = null
+      authenticated = credential
+      ;({
+        setFolder,
+        getFolder,
+
+        folderDelete,
+        folderCreate,
+        folderList,
+
+        fileStats,
+        fileDelete,
+        fileRetrieve,
+        fileStore,
+        fileRename,
+        fileSetAttributes,
+      } = storeFactory(client, credential, { basefolder: ftpRoot.toString() }))
+
+      emitter.emit("login", {
+        clientInfo,
+        username: authenticated.username,
+        openSessions: clientSessions.size,
+      })
+    }
 
     function startPassiveDataServer() {
       const addr = "0.0.0.0" // Server binds to default address, 0.0.0.0 or ipv6 ::
@@ -987,22 +1110,22 @@ export default function createFtpServer({
 
     function CmdHandler(buf: Buffer) {
       const [cmd, ...args] = buf.toString().trim().split(/\s+/)
-      log(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : args.join(" ")}]`)
+      trace(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : args.join(" ")}]`)
 
       try {
-        if (cmd in authenticatedMethods) {
+        if (cmd in preAuthMethods) {
+          preAuthMethods[cmd as keyof typeof preAuthMethods].call(
+            this,
+            cmd,
+            ...args
+          )
+        } else if (cmd in authenticatedMethods) {
           if (!authenticated) {
             client.respond("530", "Not logged in")
             return
           }
 
           authenticatedMethods[cmd as keyof typeof authenticatedMethods].call(
-            this,
-            cmd,
-            ...args
-          )
-        } else if (cmd in preAuthMethods) {
-          preAuthMethods[cmd as keyof typeof preAuthMethods].call(
             this,
             cmd,
             ...args
@@ -1020,9 +1143,8 @@ export default function createFtpServer({
 
     function SessionErrorHandler(socketType: string) {
       return function error(error: NodeJS.ErrnoException) {
-        // LATER: emit an Event object
         emitter.emit(
-          "warn", // Jest fails on unhandled error events
+          "session-error",
           `${new Date().toISOString()} ${clientInfo}-${socketType} error ${inspect(
             error,
             {
@@ -1035,21 +1157,18 @@ export default function createFtpServer({
       }
     }
 
-    function log(msg: string | { toString: () => string }) {
-      // LATER: emit an Event object
-      emitter.emit("log", `${new Date().toISOString()} ${clientInfo} ${msg}`)
+    function trace(msg: string | { toString: () => string }) {
+      emitter.emit("trace", `${new Date().toISOString()} ${clientInfo} ${msg}`)
     }
 
     function debug(msg: string | { toString: () => string }) {
-      // LATER: emit an Event object
       emitter.emit("debug", `${new Date().toISOString()} ${clientInfo} ${msg}`)
     }
   }
 
   function ServerErrorHandler(error: NodeJS.ErrnoException) {
-    // LATER: emit an Event object
     emitter.emit(
-      "error",
+      "server-error",
       `server error ${new Date().toISOString()} ${inspect(error, {
         showHidden: false,
         depth: null,
@@ -1057,55 +1176,4 @@ export default function createFtpServer({
       })}`
     )
   }
-
-  if (server) {
-    return server.on("connection", FtpSessionHandler)
-  }
-
-  // setup FTP, FTPS servers
-  let tcpServer: Server, tlsServer: Server
-  if (port) {
-    tcpServer = createServer(FtpSessionHandler).on("error", ServerErrorHandler)
-
-    tcpServer.maxConnections = maxConnections
-    tcpServer.listen(port, function () {
-      // LATER: emit an Event object
-      emitter.emit("listen", {
-        protocol: "tcp",
-        ...(this.address() as AddressInfo),
-        basefolder: localStoreFactory.basefolder,
-      })
-    })
-  }
-
-  if (securePort) {
-    secureOptions.then((secureOptions) => {
-      tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
-        "error",
-        ServerErrorHandler
-      )
-
-      tlsServer.maxConnections = maxConnections
-      tlsServer.listen(securePort, function () {
-        // LATER: emit an Event object
-        emitter.emit("listen", {
-          protocol: "tcp+tls",
-          ...(this.address() as AddressInfo),
-          basefolder: localStoreFactory.basefolder,
-        })
-      })
-    })
-  }
-
-  return Object.assign(emitter, {
-    close() {
-      tcpServer?.close()
-      tlsServer?.close()
-
-      localStoreFactory.cleanup?.()
-    },
-
-    server: tcpServer,
-    secureServer: tlsServer,
-  })
 }

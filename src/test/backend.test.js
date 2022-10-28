@@ -43,22 +43,21 @@ test("test outbound filename transformation", async () => {
     user: [john],
     allowLoginWithoutPassword: true,
     allowUserFolderCreate: true,
-    store: (factory) =>
-      Object.assign((user, client) => {
-        const backend = factory(user, client),
-          { folderList: folderListOriginal } = backend
-        return Object.assign(backend, {
-          // display on-disk ####.nc files with DNC-style O#### names
-          folderList: (folder) =>
-            folderListOriginal(folder).then((stats) =>
-              stats.map((fstat) =>
-                Object.assign(fstat, {
-                  name: transformOutbound(fstat.name),
-                })
-              )
-            ),
-        })
-      }, factory),
+    store: (factory) => (client, user, options) => {
+      const backend = factory(client, user, options),
+        { folderList: folderListOriginal } = backend
+      return Object.assign(backend, {
+        // display on-disk ####.nc files with DNC-style O#### names
+        folderList: (folder) =>
+          folderListOriginal(folder).then((stats) =>
+            stats.map((fstat) =>
+              Object.assign(fstat, {
+                name: transformOutbound(fstat.name),
+              })
+            )
+          ),
+      })
+    },
   })
 
   const cmdSocket = new ExpectSocket()
@@ -108,12 +107,11 @@ test("test inbound filename transformation", async () => {
     user: [john],
     allowLoginWithoutPassword: true,
     allowUserFileCreate: true,
-    store: (factory) =>
-      Object.assign((user, client) => {
-        return factory(user, client, {
-          resolveFilename: transformInbound,
-        })
-      }, factory),
+    store: (factory) => (client, user, options) =>
+      factory(client, user, {
+        ...options,
+        resolveFilename: transformInbound,
+      }),
   })
 
   const cmdSocket = new ExpectSocket()

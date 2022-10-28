@@ -4,15 +4,9 @@ import {
   relative as relativePath,
   resolve as resolvePath,
 } from "node:path"
+import { createReadStream, createWriteStream, statSync } from "node:fs"
 import fs from "node:fs/promises"
-import {
-  existsSync,
-  mkdirSync,
-  rmSync,
-  Stats as FsStats,
-  createReadStream,
-  createWriteStream,
-} from "node:fs"
+import type { Stats as FsStats } from "node:fs"
 import type { Socket } from "node:net"
 import type { Readable, Writable } from "node:stream"
 
@@ -74,259 +68,228 @@ export interface Store {
   ): Promise<void>
 }
 
-export type StoreOptions = {
+export type LocalStoreOptions = {
+  basefolder: string
   resolveFoldername?: (x: Path) => typeof x
   resolveFilename?: (x: Path) => typeof x
 }
 
 export type StoreFactory = (
-  user: Credential,
   client: Socket,
-  options?: StoreOptions
+  user: Credential,
+  options?: LocalStoreOptions
 ) => Store
 
-export default function localStoreFactoryInit(basefolder?: Path) {
-  let cleanup: () => void
-  if (basefolder) {
-    if (!existsSync(basefolder)) {
-      throw Object.assign(Error(`Base folder must exist`), {
+export default function localStoreFactory(
+  client: Socket,
+  user: Credential,
+  { basefolder, resolveFoldername, resolveFilename }: LocalStoreOptions
+): Store {
+  const rootFolder = resolvePath(
+    basefolder,
+    user.basefolder ?? ""
+  ) as AbsolutePath
+  if (user.basefolder) {
+    if (!statSync(rootFolder)?.isDirectory()) {
+      throw Object.assign(Error(`User's base folder must exist`), {
         code: Errors.ENOTDIR,
-        value: basefolder,
+        value: rootFolder,
       })
-    }
-  } else {
-    basefolder = resolvePath("__ftproot__") as AbsolutePath
-    if (!existsSync(basefolder)) {
-      mkdirSync(basefolder)
-      cleanup = function () {
-        rmSync(basefolder, { force: true, recursive: true })
-      }
     }
   }
 
-  return Object.assign(
-    function localStoreFactory(
-      user: Credential,
-      client: Socket,
-      options: StoreOptions = {}
-    ): Store {
-      const rootFolder = resolvePath(
-          basefolder,
-          user.basefolder ?? ""
-        ) as AbsolutePath,
-        { resolveFoldername, resolveFilename } = options
-      if (user.basefolder) {
-        if (!existsSync(rootFolder)) {
-          throw Object.assign(Error(`User's base folder must exist`), {
-            code: Errors.ENOTDIR,
-            value: rootFolder,
-          })
+  let currentFolder: AbsolutePath = "/"
+
+  const resolveFolder = (folder: Path = ""): Promise<AbsolutePath> =>
+      new Promise((resolve) => {
+        folder = joinPath(
+          rootFolder,
+          resolvePath(currentFolder, String(folder))
+        )
+        folder = resolveFoldername?.(folder) ?? folder
+        if (!folder.startsWith(rootFolder)) {
+          resolve(rootFolder) // no jailbreak!
         }
-      }
 
-      let currentFolder: AbsolutePath = "/"
+        resolve(folder as AbsolutePath)
+      }),
+    resolveFile = (file: Path = ""): Promise<AbsolutePath> =>
+      new Promise((resolve, reject) => {
+        file = joinPath(rootFolder, resolvePath(currentFolder, String(file)))
+        file = resolveFilename?.(file) ?? file
+        if (!file.startsWith(rootFolder)) {
+          reject() // no jailbreak!
+        }
 
-      const resolveFolder = (folder: Path = ""): Promise<AbsolutePath> =>
-          new Promise((resolve) => {
-            folder = joinPath(
-              rootFolder,
-              resolvePath(currentFolder, String(folder))
-            )
-            folder = resolveFoldername?.(folder) ?? folder
-            if (!folder.startsWith(rootFolder)) {
-              resolve(rootFolder) // no jailbreak!
-            }
+        resolve(file as AbsolutePath)
+      })
 
-            resolve(folder as AbsolutePath)
-          }),
-        resolveFile = (file: Path = ""): Promise<AbsolutePath> =>
-          new Promise((resolve, reject) => {
-            file = joinPath(
-              rootFolder,
-              resolvePath(currentFolder, String(file))
-            )
-            file = resolveFilename?.(file) ?? file
-            if (!file.startsWith(rootFolder)) {
-              reject() // no jailbreak!
-            }
-
-            resolve(file as AbsolutePath)
-          })
-
-      return {
-        getFolder(): AbsolutePath {
-          return currentFolder
-        },
-
-        setFolder(folder: Path) {
-          return resolveFolder(folder).then((folder) =>
-            fs.stat(folder).then((fstat) => {
-              if (!fstat.isDirectory()) {
-                throw Object.assign(new Error("not directory"), {
-                  code: Errors.ENOTDIR,
-                })
-              }
-
-              return (currentFolder = joinPath(
-                "/",
-                relativePath(rootFolder, folder)
-              ) as AbsolutePath)
-            })
-          )
-        },
-
-        folderDelete(folder: Path) {
-          // should not allow removing any path containing currentFolder?
-          return resolveFolder(folder).then((folder) =>
-            fs.rm(folder, {
-              force: true,
-              recursive: true,
-            })
-          )
-        },
-
-        folderCreate(folder: Path) {
-          return resolveFolder(folder).then((folder) =>
-            fs
-              .mkdir(folder, {
-                recursive: true,
-              })
-              .then((folder) => {
-                if (!folder) {
-                  throw Object.assign(Error(folder), {
-                    code: Errors.EEXIST,
-                  })
-                }
-              })
-          )
-        },
-
-        folderList(path: Path) {
-          return resolveFolder(path).then((path) =>
-            fs
-              .readdir(path, {
-                withFileTypes: true,
-              })
-              .then(
-                (dirents) =>
-                  Promise.all(
-                    dirents
-                      .filter(
-                        (dirent) => dirent.isDirectory() || dirent.isFile()
-                      )
-                      .map(({ name }) =>
-                        fs
-                          .stat(joinPath(path, name))
-                          .then((fstat) => Object.assign(fstat, { name }))
-                      )
-                  ),
-                () =>
-                  fs.stat(path).then((fstat) => {
-                    const { base: name } = parsePath(path)
-                    return [Object.assign(fstat, { name })]
-                  })
-              )
-          )
-        },
-
-        fileDelete(file: Path) {
-          return resolveFile(file).then((file) => fs.unlink(file))
-        },
-
-        fileStats(file: Path) {
-          return resolveFile(file)
-            .then((file) => fs.stat(file))
-            .then((fstat) => Object.assign(fstat, { name: file }))
-        },
-
-        fileRetrieve(file: Path, seek?: number) {
-          return resolveFile(file).then((file) =>
-            createReadStream(file, {
-              start: seek,
-              autoClose: true,
-              emitClose: true,
-              // Use highWaterMark that might hold the whole file in process memory
-              // -mitigate chance of corruption due to overwriting file on disk between chunked reads
-              // -actual memory consumption determined by file size and difference of read and write speeds
-              highWaterMark:
-                parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
-            })
-          )
-        },
-
-        fileStore(file: Path, allowReplace: boolean, seek = 0) {
-          const flags = (() => {
-            if (seek) {
-              if (!allowReplace) {
-                return "wx+"
-              }
-              return "w+"
-            } else if (!allowReplace) {
-              return "wx"
-            }
-            return "w"
-          })()
-          return resolveFile(file).then((file) =>
-            createWriteStream(file, {
-              flags,
-              start: seek,
-              autoClose: true,
-              emitClose: true,
-            })
-          )
-        },
-
-        fileRename(fromFile: Path) {
-          const isFile = (file: Path): Promise<void> =>
-            fs.stat(file).then((fstat) => {
-              if (!fstat.isFile()) {
-                throw Object.assign(new Error("not file"), {
-                  code: Errors.ENOTFILE,
-                })
-              }
-            })
-
-          return resolveFile(fromFile).then((fromFile) =>
-            isFile(fromFile).then(async () => {
-              return Object.assign(
-                function fileRenameTo(toFile: Path, allowOverwrite: boolean) {
-                  return resolveFile(toFile).then((toFile) =>
-                    isFile(toFile).then(
-                      () => {
-                        if (allowOverwrite) {
-                          return fs.rename(fromFile, toFile)
-                        }
-
-                        throw Object.assign(Error(toFile), {
-                          code: Errors.EEXIST,
-                        })
-                      },
-                      () => fs.rename(fromFile, toFile)
-                    )
-                  )
-                },
-                { fromFile }
-              )
-            })
-          )
-        },
-
-        fileSetAttributes(
-          file: Path,
-          attributes: { atime?: Date; mtime?: Date } & Record<string, unknown>
-        ) {
-          return resolveFile(file).then((file) => {
-            const { atime, mtime } = attributes
-            if (mtime || atime) {
-              return fs.utimes(file, atime ?? new Date(), mtime)
-            }
-          })
-        },
-      }
+  return {
+    getFolder(): AbsolutePath {
+      return currentFolder
     },
-    {
-      basefolder,
-      cleanup,
-    }
-  )
+
+    setFolder(folder: Path) {
+      return resolveFolder(folder).then((folder) =>
+        fs.stat(folder).then((fstat) => {
+          if (!fstat.isDirectory()) {
+            throw Object.assign(new Error("not directory"), {
+              code: Errors.ENOTDIR,
+            })
+          }
+
+          return (currentFolder = joinPath(
+            "/",
+            relativePath(rootFolder, folder)
+          ) as AbsolutePath)
+        })
+      )
+    },
+
+    folderDelete(folder: Path) {
+      // should not allow removing any path containing currentFolder?
+      return resolveFolder(folder).then((folder) =>
+        fs.rm(folder, {
+          force: true,
+          recursive: true,
+        })
+      )
+    },
+
+    folderCreate(folder: Path) {
+      return resolveFolder(folder).then((folder) =>
+        fs
+          .mkdir(folder, {
+            recursive: true,
+          })
+          .then((folder) => {
+            if (!folder) {
+              throw Object.assign(Error(folder), {
+                code: Errors.EEXIST,
+              })
+            }
+          })
+      )
+    },
+
+    folderList(path: Path) {
+      return resolveFolder(path).then((path) =>
+        fs
+          .readdir(path, {
+            withFileTypes: true,
+          })
+          .then(
+            (dirents) =>
+              Promise.all(
+                dirents
+                  .filter((dirent) => dirent.isDirectory() || dirent.isFile())
+                  .map(({ name }) =>
+                    fs
+                      .stat(joinPath(path, name))
+                      .then((fstat) => Object.assign(fstat, { name }))
+                  )
+              ),
+            () =>
+              fs.stat(path).then((fstat) => {
+                const { base: name } = parsePath(path)
+                return [Object.assign(fstat, { name })]
+              })
+          )
+      )
+    },
+
+    fileDelete(file: Path) {
+      return resolveFile(file).then((file) => fs.unlink(file))
+    },
+
+    fileStats(file: Path) {
+      return resolveFile(file)
+        .then((file) => fs.stat(file))
+        .then((fstat) => Object.assign(fstat, { name: file }))
+    },
+
+    fileRetrieve(file: Path, seek?: number) {
+      return resolveFile(file).then((file) =>
+        createReadStream(file, {
+          start: seek,
+          autoClose: true,
+          emitClose: true,
+          // Use highWaterMark that might hold the whole file in process memory
+          // -mitigate chance of corruption due to overwriting file on disk between chunked reads
+          // -actual memory consumption determined by file size and difference of read and write speeds
+          highWaterMark:
+            parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
+        })
+      )
+    },
+
+    fileStore(file: Path, allowReplace: boolean, seek = 0) {
+      const flags = (() => {
+        if (seek) {
+          if (!allowReplace) {
+            return "wx+"
+          }
+          return "w+"
+        } else if (!allowReplace) {
+          return "wx"
+        }
+        return "w"
+      })()
+      return resolveFile(file).then((file) =>
+        createWriteStream(file, {
+          flags,
+          start: seek,
+          autoClose: true,
+          emitClose: true,
+        })
+      )
+    },
+
+    fileRename(fromFile: Path) {
+      const isFile = (file: Path): Promise<void> =>
+        fs.stat(file).then((fstat) => {
+          if (!fstat.isFile()) {
+            throw Object.assign(new Error("not file"), {
+              code: Errors.ENOTFILE,
+            })
+          }
+        })
+
+      return resolveFile(fromFile).then((fromFile) =>
+        isFile(fromFile).then(async () => {
+          return Object.assign(
+            function fileRenameTo(toFile: Path, allowOverwrite: boolean) {
+              return resolveFile(toFile).then((toFile) =>
+                isFile(toFile).then(
+                  () => {
+                    if (allowOverwrite) {
+                      return fs.rename(fromFile, toFile)
+                    }
+
+                    throw Object.assign(Error(toFile), {
+                      code: Errors.EEXIST,
+                    })
+                  },
+                  () => fs.rename(fromFile, toFile)
+                )
+              )
+            },
+            { fromFile }
+          )
+        })
+      )
+    },
+
+    fileSetAttributes(
+      file: Path,
+      attributes: { atime?: Date; mtime?: Date } & Record<string, unknown>
+    ) {
+      return resolveFile(file).then((file) => {
+        const { atime, mtime } = attributes
+        if (mtime || atime) {
+          return fs.utimes(file, atime ?? new Date(), mtime)
+        }
+      })
+    },
+  }
 }

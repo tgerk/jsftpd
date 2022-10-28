@@ -55,7 +55,7 @@ test("create ftpd instance without options created with default values", async (
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy()
     expect(server._opt.cnf.allowUserFolderDelete).toBeTruthy() */
   const onListenFn = jest.fn()
-  server.on("listen", onListenFn)
+  server.on("listening", onListenFn)
 
   {
     // expect(server._opt.cnf.port).toBe(21)
@@ -100,7 +100,7 @@ test("ftp server can be started on non default ports", async () => {
   // expect(server._tcp.address().port).toBe(cmdPortTCP)
   // expect(server._tls.address().port).toBe(cmdPortTLS)
   const onListenFn = jest.fn()
-  server.on("listen", onListenFn)
+  server.on("listening", onListenFn)
 
   const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP + 2, localhost).response()).toBe(

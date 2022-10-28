@@ -69,7 +69,7 @@ export enum LoginError {
   Password,
 }
 
-export default function authScheme({
+export default function internalAuthFactory({
   allowAnonymousLogin,
   requireAnonymousSecure,
   user: users,

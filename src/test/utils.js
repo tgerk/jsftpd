@@ -93,6 +93,5 @@ export class ExpectSocket extends PromiseSocket {
 }
 
 export function addFactoryExtensions(extensions) {
-  return (factory) =>
-    Object.assign((opts) => Object.assign(factory(opts), extensions), factory)
+  return (factory) => (client, user, options) => Object.assign(factory(client, user, options), extensions)
 }

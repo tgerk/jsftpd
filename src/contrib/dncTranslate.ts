@@ -29,7 +29,7 @@ export default function composableFactory(
   return function dncTranslatingFactory(
     client: Socket,
     user: Credential,
-    options: LocalStoreOptions = {}
+    options: LocalStoreOptions
   ): Store {
     const handlers = baseFactory(client, user, {
       ...options,

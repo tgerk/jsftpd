@@ -1,7 +1,7 @@
 {
   "name": "jsftpd",
   "id": "jsftpd",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "FTP server for node.js",
   "main": "lib/jsftpd.js",
   "type": "module",

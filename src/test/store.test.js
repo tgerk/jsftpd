@@ -45,6 +45,16 @@ test("test STOR message without permission", async () => {
     user: [{ ...john, allowUserFileCreate: false }],
     allowLoginWithoutPassword: true,
   })
+    // .on("listening", function ({ server, basefolder }) {
+    //   console.log("listening", server.address(), basefolder)
+    // })
+    // .on("session", (session) => {
+    //   session.on("command-error", console.error)
+    //   session.on("port-error", console.error)
+    // })
+    // .on("trace", (message) => console.info(message))
+    // .on("debug", (message) => console.debug(message))
+    // .on("error", console.error)
 
   const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -63,15 +73,14 @@ test("test STOR message without permission", async () => {
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    '550 Transfer failed "mytestfile"'
+    "550 Permission denied"
   )
 
-  // permission error will not destroy data connection
   await dataSocket.end()
   await cmdSocket.end()
 })
 
-test("test STOR message", async () => {
+test("test STOR message OK", async () => {
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,
@@ -100,7 +109,7 @@ test("test STOR message", async () => {
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   await dataSocket.send("SOMETESTCONTENT")
@@ -124,7 +133,7 @@ test("test STOR message", async () => {
   expect(data).toMatch("mytestfile")
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()
@@ -154,6 +163,10 @@ test("test passive data connection times out", async () => {
 
   let dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost)
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive data connection"
+  )
 
   await sleep(3500)
   expect(dataSocket.socket.destroyed).toBe(true)
@@ -190,7 +203,7 @@ test("test STOR message with ASCII", async () => {
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   await dataSocket.send("SOMETESTCONTENT")
@@ -214,7 +227,7 @@ test("test STOR message with ASCII", async () => {
   expect(data).toMatch("mytestfile")
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()
@@ -244,7 +257,7 @@ test("test STOR message overwrite not allowed", async () => {
   let dataSocket = new ExpectSocket().connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   await dataSocket.send("SOMETESTCONTENT")
@@ -255,7 +268,6 @@ test("test STOR message overwrite not allowed", async () => {
 
   cmdSocket.command("LIST")
 
-  // only connection after command counts
   dataSocket = new ExpectSocket()
   const data = await dataSocket.connect(dataPort, localhost).receive()
   expect(data).toMatch("-r--r--r-- 1 ? ?             15")
@@ -265,16 +277,12 @@ test("test STOR message overwrite not allowed", async () => {
   expect(dataSocket.stream.destroyed).toBe(true)
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   expect(await cmdSocket.command("STOR /mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "550 File already exists"
   )
-
-  // have to connect before the error comes back
-  await dataSocket.connectSync(dataPort, localhost)
-  expect(await cmdSocket.response()).toBe("550 File already exists")
 
   await sleep(100)
   expect(dataSocket.stream.destroyed).toBe(true)
@@ -315,7 +323,7 @@ test("test STOR message with handler", async () => {
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   await dataSocket.send("SOMETESTCONTENT")
@@ -325,7 +333,7 @@ test("test STOR message with handler", async () => {
   )
 
   expect(fileStore).toBeCalledTimes(1)
-  expect(fileStore).toHaveBeenCalledWith("mytestfile", false, 0)
+  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
 
   await cmdSocket.end()
 })
@@ -363,15 +371,15 @@ test("test STOR message with handler fails", async () => {
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   await dataSocket.send("SOMETESTCONTENT")
 
-  expect(await cmdSocket.response()).toBe('550 Transfer failed "mytestfile"')
+  expect(await cmdSocket.response()).toBe('550 Transfer failed')
 
   expect(fileStore).toBeCalledTimes(1)
-  expect(fileStore).toHaveBeenCalledWith("mytestfile", false, 0)
+  expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)
 
   await cmdSocket.end()
 })
@@ -413,7 +421,7 @@ test("test STOR over secure passive connection", async () => {
   await dataSocket.connect(dataPort, localhost)
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   await dataSocket
@@ -427,7 +435,7 @@ test("test STOR over secure passive connection", async () => {
   await cmdSocket.end()
 })
 
-test("test STOR over active secure connection", async () => {
+test("test STOR over secure active connection", async () => {
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,
@@ -464,7 +472,7 @@ test("test STOR over active secure connection", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
-    "150 Opening data connection"
+    "150 Opening active data connection"
   )
 
   const dataSocket = await dataServer.getConnection()

@@ -52,7 +52,7 @@ test("test RNFR message file does not exist", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -63,7 +63,7 @@ test("test RNFR message file does not exist", async () => {
   )
 
   expect(await cmdSocket.command("RNFR myothertestfile").response()).toBe(
-    "550 File does not exist"
+    "550 File not found"
   )
 
   await cmdSocket.end()
@@ -92,7 +92,7 @@ test("test RNFR/RNTO message", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -115,7 +115,7 @@ test("test RNFR/RNTO message", async () => {
   )
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   dataSocket = new ExpectSocket()
@@ -167,7 +167,7 @@ test("test RNFR/RNTO message using handlers", async () => {
   expect(fileRename).toBeCalledTimes(1)
   expect(fileRename).toHaveBeenCalledWith("mytestfile")
   expect(fileRenameTo).toBeCalledTimes(1)
-  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile", false)
+  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile")
 
   await cmdSocket.end()
 })
@@ -208,7 +208,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   expect(fileRename).toBeCalledTimes(1)
   expect(fileRename).toHaveBeenCalledWith("mytestfile")
   expect(fileRenameTo).toBeCalledTimes(1)
-  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile", false)
+  expect(fileRenameTo).toHaveBeenCalledWith("someotherfile")
 
   await cmdSocket.end()
 })
@@ -236,7 +236,7 @@ test("test RNFR/RNTO message file already exists", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -247,7 +247,7 @@ test("test RNFR/RNTO message file already exists", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile2").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   dataSocket = new ExpectSocket()

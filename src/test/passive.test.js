@@ -6,8 +6,8 @@ import { getCmdPortTCP, formatPort, ExpectSocket } from "./utils.js"
 jest.setTimeout(5000)
 
 let server
-const cmdPortTCP = getCmdPortTCP()
 const localhost = "127.0.0.1"
+const cmdPortTCP = getCmdPortTCP()
 
 const cleanup = function () {
   if (server) {
@@ -15,8 +15,8 @@ const cleanup = function () {
     server = null
   }
 }
-beforeEach(() => cleanup())
-afterEach(() => cleanup())
+beforeEach(cleanup)
+afterEach(cleanup)
 
 const john = {
   username: "john",
@@ -31,7 +31,6 @@ test("test PASV message takes next free port", async () => {
     allowLoginWithoutPassword: true,
     maxConnections: 1,
   })
-
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
     "220 Welcome"
@@ -47,7 +46,7 @@ test("test PASV message takes next free port", async () => {
   )
 
   expect(await cmdSocket.command("LIST").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -131,7 +130,7 @@ test("test EPSV message takes next free port", async () => {
   )
 
   expect(await cmdSocket.command("LIST").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()

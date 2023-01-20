@@ -1,32 +1,40 @@
 import {
+  basename,
+  dirname,
   join as joinPath,
   parse as parsePath,
   relative as relativePath,
   resolve as resolvePath,
 } from "node:path"
-import { createReadStream, createWriteStream, statSync } from "node:fs"
+import {
+  createReadStream,
+  createWriteStream,
+  mkdtempSync,
+  rmSync,
+  statSync,
+} from "node:fs"
 import fs from "node:fs/promises"
 import type { Stats as FsStats } from "node:fs"
 import type { Socket } from "node:net"
-import type { Readable, Writable } from "node:stream"
+import { Readable, Writable } from "node:stream"
 
 import type { Credential } from "./auth.js"
 
 // TODO: PathSegment excludes url & directory separators
 export type PathSegment = string
 // TODO: RelativePath may have any number of path segments
-//  (Typescript does not support recursive type-defintion)
+//  (Typescript does not support circular reference)
 // export type RelativePath = PathSegment | `${PathSegment}/${RelativePath}`
 export type RelativePath = PathSegment | `${PathSegment}/${PathSegment}`
 export type AbsolutePath = `/${RelativePath}`
 export type Path = AbsolutePath | RelativePath
 
-// TODO: need more type assertions
 declare module "path" {
   interface PlatformPath {
     isAbsolute(p: string): p is AbsolutePath // extends boolean return value
     join(arg: AbsolutePath, ...args: string[]): AbsolutePath
     resolve(...pathSegments: string[]): AbsolutePath
+    dirname(arg: AbsolutePath): AbsolutePath
   }
 }
 
@@ -37,6 +45,7 @@ export enum Errors {
   ENOENT = "ENOENT",
   ENOTDIR = "ENOTDIR",
   ENOTFILE = "ENOTFILE",
+  EPERM = "EPERM",
 }
 
 // FTP protocol assumes storage has a tree structure
@@ -44,7 +53,7 @@ export enum Errors {
 //  file and folder manipulating commands require context
 export interface Store {
   // control PWD state, implicit in other accessors/operations
-  getFolder(): AbsolutePath
+  readonly folder: AbsolutePath
   setFolder(folder: Path): Promise<AbsolutePath>
 
   // operations on folders/buckets/nodes, arg is relative to PWD
@@ -56,20 +65,19 @@ export interface Store {
   fileDelete(file: Path): Promise<void>
   fileStats(file: Path): Promise<Stats>
   fileRetrieve(file: Path, seek?: number): Promise<Readable>
-  fileStore(file: Path, allowReplace: boolean, seek?: number): Promise<Writable>
+  fileStore(file: Path, seek?: number): Promise<Writable>
   fileRename(fromFile: Path): Promise<
-    ((toFile: Path, allowOverwrite: boolean) => Promise<void>) & {
-      fromFile: Path
+    ((toFile: Path) => Promise<void>) & {
+      fromFile: AbsolutePath
     }
   >
   fileSetAttributes(
     file: Path,
     attributes: Record<string, unknown>
-  ): Promise<void>
+  ): Promise<[FsStats, FsStats]>
 }
 
 export type LocalStoreOptions = {
-  basefolder: string
   resolveFoldername?: (x: Path) => typeof x
   resolveFilename?: (x: Path) => typeof x
 }
@@ -80,216 +88,352 @@ export type StoreFactory = (
   options?: LocalStoreOptions
 ) => Store
 
-export default function localStoreFactory(
-  client: Socket,
-  user: Credential,
-  { basefolder, resolveFoldername, resolveFilename }: LocalStoreOptions
-): Store {
-  const rootFolder = resolvePath(
-    basefolder,
-    user.basefolder ?? ""
-  ) as AbsolutePath
-  if (user.basefolder) {
-    if (!statSync(rootFolder)?.isDirectory()) {
-      throw Object.assign(Error(`User's base folder must exist`), {
-        code: Errors.ENOTDIR,
-        value: rootFolder,
-      })
+// filesystem access is performed by server's effective user
+// only minimal user-capability authorization are enforced:
+//  NOT conditional on file / folder permissions or attributes
+export default ({ basefolder }: { basefolder: AbsolutePath }) =>
+  function localStoreFactory(
+    client: Socket,
+    user: Credential,
+    { resolveFoldername, resolveFilename }: LocalStoreOptions = {}
+  ): Store {
+    if (user.basefolder) {
+      // user.basefolder relative to basefolder
+      basefolder = validateBaseFolder(resolvePath(basefolder, user.basefolder))
     }
-  }
 
-  let currentFolder: AbsolutePath = "/"
+    const noPermission = () =>
+        Promise.reject(
+          Object.assign(Error("unauthorized"), { code: Errors.EPERM })
+        ),
+      notFolder = (path: AbsolutePath) =>
+        Promise.reject(
+          Object.assign(Error("not folder"), { path, code: Errors.ENOTDIR })
+        ),
+      notFile = (path: AbsolutePath) =>
+        Promise.reject(
+          Object.assign(Error("not file"), { path, code: Errors.ENOTFILE })
+        ),
+      fileExists = () =>
+        Promise.reject(
+          Object.assign(Error("file exists"), { code: Errors.EEXIST })
+        )
 
-  const resolveFolder = (folder: Path = ""): Promise<AbsolutePath> =>
-      new Promise((resolve) => {
+    let currentFolder: AbsolutePath = "/"
+
+    function resolveFolder(folder: Path = ""): Promise<AbsolutePath> {
+      return new Promise((resolve) => {
         folder = joinPath(
-          rootFolder,
+          String(basefolder),
           resolvePath(currentFolder, String(folder))
         )
         folder = resolveFoldername?.(folder) ?? folder
-        if (!folder.startsWith(rootFolder)) {
-          resolve(rootFolder) // no jailbreak!
+        if (!folder.startsWith(basefolder)) {
+          resolve(basefolder) // no jailbreak!
         }
 
         resolve(folder as AbsolutePath)
-      }),
-    resolveFile = (file: Path = ""): Promise<AbsolutePath> =>
-      new Promise((resolve, reject) => {
-        file = joinPath(rootFolder, resolvePath(currentFolder, String(file)))
+      })
+    }
+
+    function resolveFile(file: Path): Promise<AbsolutePath> {
+      return new Promise((resolve, reject) => {
+        file = joinPath(
+          String(basefolder),
+          resolvePath(currentFolder, String(file))
+        )
         file = resolveFilename?.(file) ?? file
-        if (!file.startsWith(rootFolder)) {
+        if (!file.startsWith(basefolder)) {
           reject() // no jailbreak!
         }
 
         resolve(file as AbsolutePath)
       })
+    }
 
-  return {
-    getFolder(): AbsolutePath {
-      return currentFolder
-    },
-
-    setFolder(folder: Path) {
-      return resolveFolder(folder).then((folder) =>
-        fs.stat(folder).then((fstat) => {
-          if (!fstat.isDirectory()) {
-            throw Object.assign(new Error("not directory"), {
-              code: Errors.ENOTDIR,
-            })
-          }
-
-          return (currentFolder = joinPath(
-            "/",
-            relativePath(rootFolder, folder)
-          ) as AbsolutePath)
-        })
+    function isFolder(file: AbsolutePath, required?: true): Promise<FsStats>
+    function isFolder(
+      file: AbsolutePath,
+      required = false
+    ): Promise<FsStats | false> {
+      return fs.stat(file).then(
+        (fstat) => (fstat.isDirectory() ? fstat : notFolder(file)),
+        (error) =>
+          error.code === "ENOENT"
+            ? required && notFolder(file)
+            : Promise.reject(error)
       )
-    },
+    }
 
-    folderDelete(folder: Path) {
-      // should not allow removing any path containing currentFolder?
-      return resolveFolder(folder).then((folder) =>
-        fs.rm(folder, {
-          force: true,
-          recursive: true,
-        })
+    function isFile(file: AbsolutePath, required?: true): Promise<FsStats>
+    function isFile(
+      file: AbsolutePath,
+      required = false
+    ): Promise<FsStats | false> {
+      return fs.stat(file).then(
+        (fstat) => (fstat.isFile() ? fstat : notFile(file)),
+        (error) =>
+          error.code === "ENOENT"
+            ? required && notFile(file)
+            : Promise.reject(error)
       )
-    },
+    }
 
-    folderCreate(folder: Path) {
-      return resolveFolder(folder).then((folder) =>
-        fs
-          .mkdir(folder, {
-            recursive: true,
-          })
-          .then((folder) => {
-            if (!folder) {
-              throw Object.assign(Error(folder), {
-                code: Errors.EEXIST,
-              })
-            }
-          })
-      )
-    },
+    return {
+      get folder(): AbsolutePath {
+        return currentFolder
+      },
 
-    folderList(path: Path) {
-      return resolveFolder(path).then((path) =>
-        fs
-          .readdir(path, {
-            withFileTypes: true,
-          })
-          .then(
-            (dirents) =>
-              Promise.all(
-                dirents
-                  .filter((dirent) => dirent.isDirectory() || dirent.isFile())
-                  .map(({ name }) =>
-                    fs
-                      .stat(joinPath(path, name))
-                      .then((fstat) => Object.assign(fstat, { name }))
-                  )
-              ),
+      setFolder(folder: Path) {
+        return resolveFolder(folder).then((folder) =>
+          isFolder(folder, true).then(
             () =>
-              fs.stat(path).then((fstat) => {
-                const { base: name } = parsePath(path)
-                return [Object.assign(fstat, { name })]
-              })
+              (currentFolder = joinPath(
+                "/",
+                relativePath(String(basefolder), folder)
+              ) as AbsolutePath)
           )
-      )
-    },
+        )
+      },
 
-    fileDelete(file: Path) {
-      return resolveFile(file).then((file) => fs.unlink(file))
-    },
+      folderDelete(folder: Path) {
+        // should not allow removing any path containing currentFolder?
+        if (!user.allowFolderDelete) return noPermission()
 
-    fileStats(file: Path) {
-      return resolveFile(file)
-        .then((file) => fs.stat(file))
-        .then((fstat) => Object.assign(fstat, { name: file }))
-    },
+        return resolveFolder(folder).then((folder) =>
+          isFolder(folder, true).then(() => {
+            if (folder === basefolder) return noPermission()
 
-    fileRetrieve(file: Path, seek?: number) {
-      return resolveFile(file).then((file) =>
-        createReadStream(file, {
-          start: seek,
-          autoClose: true,
-          emitClose: true,
-          // Use highWaterMark that might hold the whole file in process memory
-          // -mitigate chance of corruption due to overwriting file on disk between chunked reads
-          // -actual memory consumption determined by file size and difference of read and write speeds
-          highWaterMark:
-            parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
-        })
-      )
-    },
-
-    fileStore(file: Path, allowReplace: boolean, seek = 0) {
-      const flags = (() => {
-        if (seek) {
-          if (!allowReplace) {
-            return "wx+"
-          }
-          return "w+"
-        } else if (!allowReplace) {
-          return "wx"
-        }
-        return "w"
-      })()
-      return resolveFile(file).then((file) =>
-        createWriteStream(file, {
-          flags,
-          start: seek,
-          autoClose: true,
-          emitClose: true,
-        })
-      )
-    },
-
-    fileRename(fromFile: Path) {
-      const isFile = (file: Path): Promise<void> =>
-        fs.stat(file).then((fstat) => {
-          if (!fstat.isFile()) {
-            throw Object.assign(new Error("not file"), {
-              code: Errors.ENOTFILE,
+            return
+            fs.rm(folder, {
+              force: true,
+              recursive: true,
             })
-          }
-        })
+          })
+        )
+      },
 
-      return resolveFile(fromFile).then((fromFile) =>
-        isFile(fromFile).then(async () => {
-          return Object.assign(
-            function fileRenameTo(toFile: Path, allowOverwrite: boolean) {
-              return resolveFile(toFile).then((toFile) =>
-                isFile(toFile).then(
-                  () => {
-                    if (allowOverwrite) {
-                      return fs.rename(fromFile, toFile)
-                    }
+      folderCreate(folder: Path) {
+        if (!user.allowFolderCreate) return noPermission()
 
-                    throw Object.assign(Error(toFile), {
-                      code: Errors.EEXIST,
-                    })
-                  },
-                  () => fs.rename(fromFile, toFile)
-                )
+        return resolveFolder(folder).then((folder) =>
+          fs
+            .mkdir(folder, {
+              recursive: true,
+            })
+            .then((folder) => {
+              if (!folder) {
+                throw Object.assign(Error(folder), {
+                  code: Errors.EEXIST,
+                })
+              }
+            })
+        )
+      },
+
+      folderList(folder: Path) {
+        return resolveFolder(folder).then((folder) =>
+          isFolder(folder, true).then(() =>
+            fs
+              .readdir(folder, {
+                withFileTypes: true,
+              })
+              .then(
+                (dirents) =>
+                  Promise.all(
+                    dirents
+                      .filter(
+                        (dirent) => dirent.isDirectory() || dirent.isFile()
+                      )
+                      .map(({ name }) =>
+                        fs
+                          .stat(joinPath(folder, name))
+                          .then((fstat) => Object.assign(fstat, { name }))
+                      )
+                  ),
+                () =>
+                  fs.stat(folder).then((fstat) => {
+                    const { base: name } = parsePath(folder)
+                    return [Object.assign(fstat, { name })]
+                  })
               )
-            },
-            { fromFile }
           )
-        })
-      )
-    },
+        )
+      },
 
-    fileSetAttributes(
-      file: Path,
-      attributes: { atime?: Date; mtime?: Date } & Record<string, unknown>
-    ) {
-      return resolveFile(file).then((file) => {
-        const { atime, mtime } = attributes
+      fileDelete(file: Path) {
+        if (!user.allowFileDelete) return noPermission()
+
+        return resolveFile(file).then((file) =>
+          isFile(file, true).then(() => fs.unlink(file))
+        )
+      },
+
+      fileStats(file: Path) {
+        return resolveFile(file).then((file) =>
+          fs.stat(file).then((fstat) => {
+            if (!fstat.isFile()) return notFile(file)
+
+            return Object.assign(fstat, { name: basename(file) })
+          })
+        )
+      },
+
+      fileRetrieve(file: Path, start = 0) {
+        if (!user.allowFileRetrieve) return noPermission()
+
+        return resolveFile(file).then((file) =>
+          isFile(file, true).then(() =>
+            createReadStream(file, {
+              start,
+
+              // Use highWaterMark that might buffer the whole file in process memory
+              // -mitigate chance of corruption due to overwriting file on disk between chunked reads
+              // -actual memory consumption determined by file size and difference of read and write speeds
+              highWaterMark:
+                parseInt(process.env["RETRIEVE_FILE_BUFFER"]) || 100 << 20, // 100MB
+            })
+          )
+        )
+      },
+
+      fileStore(file: Path, seek = 0) {
+        if (!user.allowFileOverwrite && !user.allowFileCreate)
+          return noPermission()
+
+        return resolveFile(file).then((file) =>
+          isFile(file)
+            .then((isFile) => {
+              if (isFile) {
+                if (!user.allowFileOverwrite) return fileExists()
+              } else if (seek) return notFile(file)
+
+              if (!user.allowFileCreate) return noPermission()
+
+              return isFile
+            })
+            .then((isFile) =>
+              isFolder(dirname(file), true).then(() => {
+                // write stream to a temp location and on success rename/replace named file, drop temp file on failure
+                const tmpFile = `${file}+${new Date().getMilliseconds()}`,
+                  stream = createWriteStream(tmpFile, { flags: "wx" }).on(
+                    "open",
+                    async function onOpen() {
+                      function onClose() {
+                        fs.unlink(tmpFile)
+                      }
+
+                      this.once("close", onClose).once(
+                        "finish",
+                        function onFinish() {
+                          this.off("close", onClose)
+
+                          // prettier-ignore
+                          fs.unlink(file).catch(() => undefined)
+                          .then(() => fs.link(tmpFile, file))
+                          .then(() => fs.unlink(tmpFile))
+                        }
+                      )
+                    }
+                  )
+
+                if (isFile) Object.assign(stream, { overwrite: true })
+
+                if (seek) {
+                  // copy offset bytes from source file
+                  return new Promise((resolve) =>
+                    createReadStream(file, { end: seek })
+                      .on("end", () => resolve(stream))
+                      .pipe(this, { end: false })
+                  )
+                }
+
+                return stream
+              })
+            )
+        )
+      },
+
+      fileRename(fromFile: Path) {
+        if (!user.allowFileRename) return noPermission()
+
+        return resolveFile(fromFile).then((fromFile) =>
+          isFile(fromFile, true).then(() =>
+            Object.assign(
+              function fileRenameTo(toFile: Path) {
+                return resolveFile(toFile).then((toFile) =>
+                  isFile(toFile)
+                    .then((isFile) => {
+                      if (isFile) {
+                        if (!user.allowFileOverwrite) return fileExists()
+                      }
+
+                      if (!user.allowFileCreate) return noPermission()
+                    })
+                    .then(() =>
+                      isFolder(dirname(toFile), true).then(() => {
+                        fs.rename(fromFile, toFile)
+                      })
+                    )
+                )
+              },
+              { fromFile }
+            )
+          )
+        )
+      },
+
+      fileSetAttributes(
+        file: Path,
+        {
+          mtime,
+          atime,
+        }: { mtime?: Date; atime?: Date } & Record<string, unknown>
+      ) {
+        if (!user.allowFileSetAttributes) return noPermission()
+
         if (mtime || atime) {
-          return fs.utimes(file, atime ?? new Date(), mtime)
+          return resolveFile(file).then((file) =>
+            isFile(file, true).then((fstat) =>
+              fs
+                .utimes(file, atime ?? fstat.atime, mtime ?? fstat.mtime)
+                .then(() => fs.stat(file).then((fstatNew) => [fstat, fstatNew]))
+            )
+          )
         }
-      })
-    },
+
+        return Promise.reject()
+      },
+    }
   }
+
+export function validateBaseFolder(
+  folder: AbsolutePath | RelativePath
+): AbsolutePath & { cleanup?: () => void } {
+  if (!folder) {
+    const folder = mkdtempSync(resolvePath("ftproot-")) as AbsolutePath
+    return Object.assign(folder, {
+      cleanup() {
+        rmSync(folder.toString(), { force: true, recursive: true })
+      },
+    })
+  }
+
+  const absFolder = resolvePath(folder) as AbsolutePath, // resolve relative to process.cwd()
+    folderStats = statSync(absFolder, { throwIfNoEntry: false })
+  if (!folderStats) {
+    throw Object.assign(Error(`Base folder must exist`), {
+      code: Errors.ENOTDIR,
+      value: absFolder,
+    })
+  }
+
+  if (!folderStats.isDirectory()) {
+    throw Object.assign(Error(`Base folder must be directory`), {
+      code: Errors.ENOTDIR,
+      value: absFolder,
+    })
+  }
+
+  return absFolder
 }

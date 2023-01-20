@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /*
  * @package jsftpd
  * @author Sven <mailsvb@gmail.com>
@@ -7,9 +6,10 @@
  */
 
 import { EventEmitter } from "node:events"
-import { mkdtempSync, rmSync, statSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { Stats as FsStats } from "node:fs"
 import { connect, createServer, Server } from "node:net"
-import type {
+import {
   Socket,
   AddressInfo,
   ListenOptions,
@@ -22,8 +22,8 @@ import {
   createServer as createSecureServer,
   createSecureContext,
 } from "node:tls"
-import type { SecureContextOptions, Server as TlsServer } from "node:tls"
-import { inspect, format } from "node:util"
+import { SecureContextOptions, Server as TLSServer } from "node:tls"
+import { format } from "node:util"
 
 import internalAuthFactory, {
   AuthFactory,
@@ -37,22 +37,23 @@ import localStoreFactory, {
   StoreFactory,
   Errors as StoreErrors,
   RelativePath,
+  Stats,
+  validateBaseFolder,
 } from "./store.js"
 import type { AbsolutePath } from "./store.js"
 
-import { asciify, deasciify } from "./util/ascii.js"
-import { formatListing } from "./util/list.js"
-import { format_rfc3659_time, parse_rfc3659_time } from "./util/time.js"
-import createConnectionSource from "./util/connection-source.js"
-import type { ConnectionSource } from "./util/connection-source.js"
+import { asciify, deasciify, tee } from "./ascii.js"
+import { addDeferredIteratorOnEvent } from "./deferred.js"
+import { formatListing } from "./list.js"
+import { rfc3659_formatTime, rfc3659_parseTime } from "./time.js"
 
 export type ComposableAuthFactory = (factory: AuthFactory) => AuthFactory
 export type ComposableStoreFactory = (factory: StoreFactory) => StoreFactory
 
 export type ServerOptions = {
-  server?: Server
+  server?: Server | TLSServer
   port?: number | ListenOptions
-  securePort?: number
+  securePort?: number | ListenOptions
   minDataPort?: number
   maxConnections?: number
   timeout?: number
@@ -63,103 +64,193 @@ export type ServerOptions = {
   store?: ComposableStoreFactory | ComposableStoreFactory[] // most-significant first
 } & AuthOptions
 
-interface FtpServer2 extends EventEmitter {
-  server: Server
-  secureServer: TlsServer
-  close(callback?: (err?: Error) => void): this
+interface FtpServerControls {
+  basefolder: string
+
+  emit(event: "reload-auth", options: AuthOptions): void
+}
+
+interface FtpServerEvents {
   on(
     event: "listening",
+    listener: (data: {
+      server: Server | TLSServer
+      basefolder: AbsolutePath
+    }) => void
+  ): this
+
+  on(
+    event: "session",
+    listener: (socket: Socket | (TLSSocket & FtpSessionEvents)) => void
+  ): this
+
+  on(
+    event: "login" | "logoff",
+    listener: (data: {
+      client: string
+      username: string
+      sessions: number
+    }) => void
+  ): this
+
+  // command channel in/out plus folder listing
+  on(
+    event: "trace",
+    listener: (data: { msg: string; client: FtpSession }) => void
+  ): this
+
+  // networking
+  on(
+    event: "debug",
     listener: (
-      info: { protocol: string; basefolder: string } & AddressInfo
+      msg: string,
+      data: {
+        client: FtpSession
+        dataServer?: Server
+        socket?: Socket
+      }
+    ) => void
+  ): this
+
+  on(
+    event: "create-directory" | "read-directory" | "remove-directory",
+    listener: (data: {
+      client: string
+      username: string
+      folder: string
+    }) => void
+  ): this
+  on(
+    event: "upload",
+    listener: (data: {
+      client: string
+      username: string
+      file: string
+      sha256: string
+      overwrite: boolean
+      offset: number
+      size: number
+    }) => void
+  ): this
+  on(
+    event: "download",
+    listener: (data: {
+      client: string
+      username: string
+      file: string
+      sha256: string
+      offset: number
+      size: number
+    }) => void
+  ): this
+  on(
+    event: "rename",
+    listener: (data: {
+      client: string
+      username: string
+      fileFrom: string
+      fileTo: string
+    }) => void
+  ): this
+  on(
+    event: "delete",
+    listener: (data: { client: string; username: string; file: string }) => void
+  ): this
+  on(
+    event: "modify",
+    listener: (data: {
+      client: string
+      username: string
+      file: string
+      fstatOriginal: FsStats
+      fstatNew: FsStats
+    }) => void
+  ): this
+  on(
+    event: "inspect",
+    listener: (data: {
+      client: string
+      username: string
+      file: string
+      fstat: Stats
+    }) => void
+  ): this
+}
+
+interface FtpSessionEvents {
+  on(
+    event: "command-error",
+    listener: (this: FtpSession, data: { cmd: string; error: unknown }) => void
+  ): this
+  on(
+    event: "port-error",
+    listener: (
+      this: FtpSession,
+      msg: string,
+      data: {
+        error: unknown
+        client: FtpSession
+        dataServer?: Server
+        socket?: Socket
+      }
     ) => void
   ): this
 }
 
-interface FtpServerEvents {
-  on(event: "login", listener: () => void): this
-  on(event: "logoff", listener: () => void): this
-  on(event: "upload", listener: () => void): this
-  on(event: "download", listener: () => void): this
-  on(event: "rename", listener: () => void): this
-  on(event: "trace", listener: () => void): this
-  on(event: "debug", listener: () => void): this
-  on(event: "session-error", listener: () => void): this
-  on(event: "server-error", listener: () => void): this
+type FtpSession = (Socket | TLSSocket) & FtpSessionEvents
+
+export type FtpServer = EventEmitter & {
+  server?: Server
+  secureServer?: TLSServer
+
+  on(
+    event: "listening",
+    listener: (server: Server | TLSServer, basefolder: string) => void
+  ): FtpServer
+
+  close: (callback?: (err?: Error) => void) => FtpServer
 }
 
-export type FtpServer = (Server | FtpServer2) & {
-  reloadAuth: (options: AuthOptions) => void
-} & FtpServerEvents
-
 export default function createFtpServer({
-  server,
-  port = 21,
+  server, // caller handles binding to path or address/port
+  port,
   securePort,
   minDataPort = 1024,
   maxConnections = 10,
-  timeout,
-  dataTimeout,
-  tls: tlsOptions,
-  basefolder,
+  timeout, // max session duration (not an idle-timeout)
+  dataTimeout, // max data transfer time (not a connection-delay timeout)
+  tls: tlsOptions, // TODO: compatible or extractible from caller-provided server?
   auth,
   store,
-  ...authOptions
-}: ServerOptions = {}): FtpServer {
+  ...options
+}: ServerOptions = {}): (Server | TLSServer | FtpServer) &
+  FtpServerControls &
+  FtpServerEvents {
+  if (!port && !securePort && !server) port = { port: 21 }
+  dataTimeout = dataTimeout ?? timeout
+
+  // always prepare TLS certs and secure context for TLS escalation
   tlsOptions = {
     // rejectUnauthorized: false, // enforce CA trust
     honorCipherOrder: true,
     ...tlsOptions,
   }
-
-  // always prepare TLS certs and secure context for TLS escalation
-  const secureOptions = (async () => {
+  const secureOptions = (() => {
       if (
         ("key" in tlsOptions && "cert" in tlsOptions) ||
         "pfx" in tlsOptions
       ) {
-        return tlsOptions
+        return Promise.resolve(tlsOptions)
       }
 
       // load key & cert from well-known location, else generate self-signed certificate
-      return await import("./util/tls.js").then((keys) => ({
+      return import("./tls.js").then((keys) => ({
         ...tlsOptions,
         ...keys,
       }))
     })(),
-    secureContext = secureOptions.then(createSecureContext)
+    secureContext = secureOptions.then(createSecureContext) // can use with tls.Socket constructor option, not tls.Server
 
-  // create (and clean up) the default basefolder, if needed
-  const ftpRoot = ((
-    folder: AbsolutePath | RelativePath
-  ): AbsolutePath & { cleanup?: () => void } => {
-    if (!folder) {
-      const tmpFolder = mkdtempSync(resolvePath("ftproot-")) as AbsolutePath
-      return Object.assign(tmpFolder, {
-        cleanup() {
-          rmSync(tmpFolder.toString(), { force: true, recursive: true })
-        },
-      })
-    }
-
-    const absFolder = resolvePath(folder) as AbsolutePath
-    try {
-      if (!statSync(absFolder)?.isDirectory()) {
-        throw Object.assign(Error(`Base folder must be directory`), {
-          code: StoreErrors.ENOTDIR,
-          value: absFolder,
-        })
-      }
-
-      return absFolder
-    } catch {
-      throw Object.assign(Error(`Base folder must exist`), {
-        code: StoreErrors.ENOTDIR,
-        value: absFolder,
-      })
-    }
-  })(basefolder)
-
-  // compose auth and storage backend handler factories
   const authFactory = ((authFactory) => {
     if (auth instanceof Array) {
       return auth.reduceRight((y, f) => f(y), authFactory)
@@ -172,156 +263,380 @@ export default function createFtpServer({
     return authFactory
   })(internalAuthFactory)
 
-  const storeFactory = ((storeFactory) => {
-    if (store instanceof Array) {
-      return store.reduceRight((y, f) => f(y), storeFactory)
-    }
+  const basefolder = validateBaseFolder(options.basefolder),
+    storeFactory = ((storeFactory) => {
+      if (store instanceof Array) {
+        return store.reduceRight((y, f) => f(y), storeFactory)
+      }
 
-    if (store instanceof Function) {
-      return store(storeFactory)
-    }
+      if (store instanceof Function) {
+        return store(storeFactory)
+      }
 
-    return storeFactory
-  })(localStoreFactory)
-
-  let authenticate = authFactory(authOptions)
-  const reloadAuth = (authOptions: AuthOptions) => {
-    authenticate = authFactory(authOptions)
-  }
+      return storeFactory
+    })(localStoreFactory({ basefolder }))
 
   // track active and cumulative client sessions
   let clientCounter = 0
   const clientSessions: Set<Socket> = new Set()
 
   const emitter = server ?? new EventEmitter()
+
+  let authenticate = authFactory(options)
+  emitter.on("reload-auth", (options: AuthOptions) => {
+    authenticate = authFactory(options)
+  })
+
   if (server) {
-    server.on("connection", FtpSessionHandler)
-    if (ftpRoot.cleanup) {
-      server.on("close", ftpRoot.cleanup)
+    if (server instanceof TLSServer) {
+      server.on("secureConnection", FtpSessionHandler)
+    } else {
+      server.on("connection", FtpSessionHandler)
     }
 
-    return Object.assign(server, {
-      reloadAuth,
-    })
+    if (basefolder.cleanup) {
+      server.on("close", basefolder.cleanup)
+    }
+
+    return Object.assign(server, { basefolder })
   }
 
   // setup FTP, FTPS servers
-  let tcpServer: Server, tlsServer: TlsServer
+  let tcpServer: Server
   if (port) {
-    tcpServer = createServer(FtpSessionHandler).on("error", ServerErrorHandler)
+    tcpServer = createServer(FtpSessionHandler)
+    // .on("connection", emitter.emit.bind(emitter, "connection"))
+    // .on("drop", emitter.emit.bind(emitter, "drop"))
+    // .on("error", emitter.emit.bind(emitter, "error"))
+    // .on("close", emitter.emit.bind(emitter, "close"))
 
     tcpServer.maxConnections = maxConnections
     tcpServer.listen(port, function () {
-      emitter.emit("listening", {
-        protocol: "tcp",
-        ...(this.address() as AddressInfo),
-        basefolder: ftpRoot,
-      })
+      emitter.emit("listening", { server: this, basefolder })
     })
+
+    if (basefolder.cleanup) {
+      // idempotent
+      tcpServer.on("close", basefolder.cleanup)
+    }
+
+    Object.assign(emitter, { server: tcpServer })
   }
 
+  let tlsServer: Promise<TLSServer>
   if (securePort) {
-    secureOptions.then((secureOptions) => {
-      tlsServer = createSecureServer(secureOptions, FtpSessionHandler).on(
-        "error",
-        ServerErrorHandler
-      )
+    tlsServer = secureOptions.then((secureOptions) => {
+      const tlsServer = createSecureServer(secureOptions, FtpSessionHandler)
+      // .on("connection", emitter.emit.bind(emitter, "connection"))
+      // .on("keylog", emitter.emit.bind(emitter, "keylog"))
+      // .on("newSession", emitter.emit.bind(emitter, "newSession")) // if registered, need a response from handler to finish TLS handshake
+      // .on("OCSPRequest", emitter.emit.bind(emitter, "OCSPRequest"))
+      // .on("resumeSession", emitter.emit.bind(emitter, "resumeSession")) // if registered, need a response from handler to finish TLS handshake
+      // .on("tlsClientError", emitter.emit.bind(emitter, "tlsClientError"))
+      // .on("secureConnection", emitter.emit.bind(emitter, "secureConnection"))
+      // .on("drop", emitter.emit.bind(emitter, "drop"))
+      // .on("error", emitter.emit.bind(emitter, "error"))
+      // .on("close", emitter.emit.bind(emitter, "close"))
 
       tlsServer.maxConnections = maxConnections
       tlsServer.listen(securePort, function () {
-        emitter.emit("listening", {
-          protocol: "tcp+tls",
-          ...(this.address() as AddressInfo),
-          basefolder: ftpRoot,
-        })
+        emitter.emit("listening", { server: this, basefolder })
       })
-    })
-  }
 
-  if (ftpRoot.cleanup) {
-    tcpServer?.on("close", ftpRoot.cleanup)
-    tlsServer?.on("close", ftpRoot.cleanup)
+      return tlsServer
+    })
+
+    if (basefolder.cleanup) {
+      // idempotent
+      tlsServer.then((server) => server.on("close", basefolder.cleanup))
+    }
+
+    Object.assign(emitter, { secureServer: tlsServer })
   }
 
   return Object.assign(emitter, {
+    basefolder,
     close(callback?: (err?: Error) => void) {
       tcpServer?.close(callback)
-      tlsServer?.close(callback)
+      tlsServer?.then((server) => server.close(callback))
       return this
     },
-
-    reloadAuth,
-
-    server: tcpServer,
-    secureServer: tlsServer,
   })
 
-  function FtpSessionHandler(
-    client: Socket & {
-      respond?: (code: string, message: string, delimiter?: string) => void
-    }
-  ) {
+  function FtpSessionHandler(this: Server, socket: Socket | TLSSocket) {
     const clientInfo = `[(${++clientCounter}) ${
-      client.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
-    }:${client.remotePort}]`
-    Object.assign(client, {
+      socket.remoteAddress?.replace(/::ffff:/g, "") ?? "unknown"
+    }:${socket.remotePort}]`
+    let client = Object.assign(socket, {
       respond(this: Socket, code: string, message: string, delimiter = " ") {
-        trace(`<<< ${code} ${message}`)
+        emitter.emit("trace", `<<< ${code} ${message}`, client)
         this.write(`${code}${delimiter}${message}\r\n`)
       },
     })
 
-    client
-      .on("error", SessionErrorHandler("command socket"))
-      .on("close", function () {
-        ;(dataPort as ConnectionSource)?.close?.()
-        clientSessions.delete(this)
-        debug(`FTP connection closed`)
-      })
-      .on("data", CmdHandler)
-
+    emitter.emit("debug", `established FTP connection`, { client })
     clientSessions.add(client)
+
+    client.on("data", CmdHandler).on("close", function () {
+      if (dataServer) {
+        emitter.emit("debug", `closing data server ${JSON.stringify(dataServer.address())}`, { client, dataServer }) // prettier-ignore
+      }
+      dataServer?.close()
+      clientSessions.delete(this)
+      emitter.emit("debug", `FTP connection closed`, { client })
+    })
+
     client.respond("220", "Welcome")
-    debug(`established FTP connection`)
+    emitter.emit("session", client)
+
+    // TODO: authentication by Kerberos single-signon (Windows Authentication)
+    // TODO: authentication by client cert
+    // TODO: push down allow* credential access to the Store
 
     // session state
     let authUser: (token: string) => Promise<Credential>,
-      authenticated: Credential
+      user: Credential,
+      store: Store
+    function setUser(credential: Credential) {
+      authUser = null
+      user = credential
+      store = storeFactory(client, credential)
 
-    let setFolder: Store["setFolder"],
-      getFolder: Store["getFolder"],
-      folderDelete: Store["folderDelete"],
-      folderCreate: Store["folderCreate"],
-      folderList: Store["folderList"],
-      fileStats: Store["fileStats"],
-      fileDelete: Store["fileDelete"],
-      fileRetrieve: Store["fileRetrieve"],
-      fileStore: Store["fileStore"],
-      fileRename: Store["fileRename"],
-      fileSetAttributes: Store["fileSetAttributes"]
+      emitter.emit("login", {
+        client: clientInfo,
+        username: user.username,
+        sessions: clientSessions.size,
+      })
+    }
 
     let asciiTxfrMode = false,
       pbszReceived = false,
       protectedMode = false,
-      dataOffset = 0
+      dataOffset = 0,
+      renameFile: Awaited<ReturnType<Store["fileRename"]>>
 
-    // implement passive data server as an async iterator for incoming connections (as by Deno)
-    let dataPort: TcpSocketConnectOpts | ConnectionSource
-    let renameFileToFn: Awaited<ReturnType<Store["fileRename"]>>
+    let dataServer: Server & AsyncIterator<Socket>,
+      dataPort: TcpSocketConnectOpts
+
+    function startDataServer(): Promise<Server & AsyncIterator<Socket>> {
+      const dataServer = addDeferredIteratorOnEvent<Server, Socket>(createServer(), "connection")
+        .on("error", function (error) { this.throw(error) }) // prettier-ignore
+        .on("close", function () { this.return() }) // prettier-ignore
+
+      dataServer.maxConnections = 1
+
+      return selectDataPort(minDataPort, maxConnections).then(
+        (port) =>
+          // promisify net.Server.listen()
+          new Promise((resolve, reject) => {
+            // TODO listen to same address as server or secureServer
+            dataServer
+              .on("error", reject)
+              .listen(port, function onListening(this: typeof dataServer) {
+                emitter.emit("debug", `data server listening ${JSON.stringify(this.address())}`, { client, dataServer: this }) // prettier-ignore
+
+                resolve(
+                  this.off("error", reject)
+                    .on("error", function (error) {
+                      client.emit("port-error", "data server", { error, client, dataServer: this }) // prettier-ignore
+                    })
+                    .on("close", function () {
+                      // when closed, this.address() returns null
+                      emitter.emit("debug", `closed data server port[${port}]`, { client, dataServer: this }) // prettier-ignore
+                    })
+                )
+              })
+          })
+      )
+
+      // TODO: avoid port scanning
+      function selectDataPort(minDataPort: number, maxConnections: number) {
+        return new Promise<number>((resolve, reject) => {
+          // TODO: if minDataPort is not set, ignore maxConnections & just listen on a random port, stateful firewalls can cope
+          // port-based firewalls want a block of ports from min to min+max
+          if (minDataPort <= 0 || minDataPort > 65535) {
+            reject(Error("minDataPort out-of-range 1-65535"))
+            return
+          }
+
+          ;(function checkAvailablePort(port: number) {
+            createServer()
+              .once("error", function () {
+                if (port >= minDataPort + maxConnections) {
+                  reject(Error("exceeded maxConnections"))
+                  return
+                }
+
+                checkAvailablePort(port + 1) // continue port scan
+              })
+              .once("close", function () {
+                resolve(port)
+              })
+              .listen(port, function () {
+                this.close()
+              })
+          })(minDataPort)
+        })
+      }
+    }
+
+    function getDataSocket() {
+      // promisify incoming/outbound connection
+      return new Promise<Socket>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(Error("connection timeout")),
+          2000
+        )
+
+        if (dataServer) {
+          client.respond("150", "Awaiting passive data connection")
+
+          // eslint-disable-next-line no-inner-declarations
+          function onClose(cause?: Error) {
+            reject(new Error("server closed", { cause }))
+          }
+
+          // dataServer implements AsyncIterable<Socket>
+          const server = dataServer
+          server
+            .on("error", reject)
+            .on("close", onClose)
+            .next()
+            .then(({ done, value: socket }) => {
+              clearTimeout(timer)
+              server.off("error", reject).off("close", onClose)
+
+              if (done) {
+                reject(Error("data server has closed"))
+                return
+              }
+
+              // TODO: assure remote address is same as command channel
+
+              emitter.emit("debug", `passive data connection established`, { client, socket }) // prettier-ignore
+              resolve(socket)
+            })
+        } else if (dataPort) {
+          client.respond("150", "Opening active data connection")
+
+          const { host, port } = dataPort
+          emitter.emit("debug", `connecting to ${host} port ${port}`, { client }) // prettier-ignore
+          connect(dataPort, async function onActiveDataConnect() {
+            clearTimeout(timer)
+            this.off("error", reject)
+            emitter.emit("debug", `active data connection established`, { client, socket: this }) // prettier-ignore
+
+            resolve(this)
+          }).on("error", reject)
+        } else {
+          clearTimeout(timer)
+          reject(Error("active or passive mode not selected"))
+        }
+      })
+        .then<Socket>(async (socket) => {
+          // secure the connection
+          const secure = "encrypted" in client && protectedMode
+          if (secure) {
+            // promisify new tls.Socket()
+            const ctx = await secureContext
+            return new Promise<TLSSocket>((resolve, reject) => {
+              new TLSSocket(socket, {
+                isServer: true,
+                secureContext: ctx,
+              })
+                .on("error", reject)
+                .once("secure", function (this: TLSSocket) {
+                  // TLS handshake is complete (tls.Socket emits "secure", tls.Server emits "secureConnection")
+                  emitter.emit("debug", `data connection secured`, { client, socket: this }) // prettier-ignore
+                  resolve(this.off("error", reject))
+                })
+            })
+          }
+
+          return socket
+        })
+        .then((socket) => {
+          if (dataTimeout) {
+            socket.setTimeout(dataTimeout, socket.destroy.bind(socket))
+          }
+
+          return socket
+            .on("error", function (error) {
+              client.emit("port-error", "data connection", { error, client, socket: this }) // prettier-ignore
+            })
+            .on("close", function () {
+              emitter.emit("debug", `data connection closed`, { client, socket: this }) // prettier-ignore
+            })
+        })
+    }
+
+    function resetSession() {
+      authUser = null
+      user = null
+      store = null
+
+      asciiTxfrMode = false
+      pbszReceived = false
+      protectedMode = false
+      dataOffset = 0
+      renameFile = null
+
+      dataServer?.close()
+      dataServer = dataPort = null
+    }
 
     const preAuthMethods = {
-        USER(_: string, user: string) {
+        QUIT() {
+          client.respond("221", "Goodbye")
+          client.end()
+
+          if (user) {
+            emitter.emit("logoff", {
+              client: clientInfo,
+              username: user.username,
+              sessions: clientSessions.size - 1,
+            })
+          }
+        },
+
+        AUTH(_: string, auth: string) {
+          switch (auth) {
+            case "TLS":
+            case "SSL":
+              resetSession() // RFC-4217
+              client.respond("234", `Using authentication type ${auth}`)
+
+              secureContext.then((secureContext) => {
+                client = Object.assign(
+                  new TLSSocket(client, {
+                    isServer: true,
+                    secureContext,
+                  })
+                    .once("secure", () => {
+                      emitter.emit("debug", `command connection secured`, { client }) // prettier-ignore
+                    })
+                    .on("data", CmdHandler),
+                  { respond: client.respond }
+                )
+              })
+              break
+            default:
+              client.respond("504", `Unsupported auth type ${auth}`)
+          }
+        },
+
+        USER(cmd: string, user: string) {
           resetSession()
           authenticate(client, user)
-            .then((credentialOrAuth) => {
-              if (credentialOrAuth instanceof Function) {
-                authUser = credentialOrAuth
+            .then((credential) => {
+              if (credential instanceof Function) {
+                authUser = credential
                 client.respond("331", `Password required for ${user}`)
                 // LATER: extra data for OAUTH, ID provider link?
                 return
               }
 
-              setUser(credentialOrAuth)
+              setUser(credential)
               client.respond("232", "User logged in")
             })
             .catch((loginError) => {
@@ -338,62 +653,32 @@ export default function createFtpServer({
             })
         },
 
+        // LATER: extra data for OAUTH, refresh token?
+        // LATER: inject protocol extensions for KRB negotiation?
         PASS(_: string, token: string) {
           if (!authUser) {
             client.respond("503", "USER missing")
           } else
             authUser(token)
-              .then((credential: Credential) => {
-                setUser(credential)
-                client.respond("230", "Logged on")
-                // LATER: extra data for OAUTH, refresh token?
-              })
-              .catch((loginError) => {
-                switch (loginError) {
-                  case LoginError.Password:
-                    client.respond("530", "Username or password incorrect")
-                    break
+              .then(
+                (credential: Credential) => {
+                  setUser(credential)
+                  client.respond("230", "Logged on")
+                },
+                (loginError) => {
+                  switch (loginError) {
+                    case LoginError.Password:
+                      client.respond("530", "Username or password incorrect")
+                      break
 
-                  default:
-                    throw loginError
+                    default:
+                      throw loginError
+                  }
                 }
+              )
+              .finally(() => {
+                authUser = null
               })
-        },
-
-        AUTH(_: string, auth: string) {
-          switch (auth) {
-            case "TLS":
-            case "SSL":
-              client.respond("234", `Using authentication type ${auth}`)
-              resetSession() // reset session variables (User, CWD, Mode, etc.  RFC-4217)
-
-              secureContext.then((secureContext) => {
-                client = Object.assign(
-                  new TLSSocket(client, {
-                    secureContext,
-                    isServer: true,
-                  }),
-                  { respond: client.respond }
-                )
-                client.on("data", CmdHandler)
-                debug(`command connection secured`)
-              })
-              break
-            default:
-              client.respond("504", `Unsupported auth type ${auth}`)
-          }
-        },
-
-        QUIT() {
-          client.respond("221", "Goodbye")
-          client.end()
-
-          authenticated &&
-            emitter.emit("logoff", {
-              clientInfo,
-              username: authenticated.username,
-              openSessions: clientSessions.size - 1,
-            })
         },
       },
       authenticatedMethods = {
@@ -447,15 +732,14 @@ export default function createFtpServer({
         },
 
         PORT(_: string, spec: string) {
-          const [net0, net1, net2, net3, portHi, portLo] = spec.split(","),
-            addr = [net0, net1, net2, net3].join("."),
-            port = parseInt(portHi, 10) * 256 + parseInt(portLo)
-          if (/* addr.match(/\d{1,3}(\.\d{1,3}){3}/) && */ port > 0) {
-            if (dataPort instanceof Server) {
-              dataPort.close()
-            }
+          const parts = spec.split(","),
+            host = parts.slice(0, 4).join("."),
+            port = (parseInt(parts[4], 10) << 8) | parseInt(parts[5])
+          if (host.match(/\d{1,3}(\.\d{1,3}){3}/) && port) {
+            dataServer?.close()
+            dataServer = null
+            dataPort = { host, port }
 
-            dataPort = { host: addr, port }
             client.respond("200", "Port command successful")
           } else {
             client.respond("501", "Port command failed")
@@ -463,50 +747,45 @@ export default function createFtpServer({
         },
 
         PASV(cmd: string) {
-          if (dataPort instanceof Server) {
-            dataPort.close()
-          }
-          dataPort = undefined
-
-          startPassiveDataServer().then(
+          dataServer?.close()
+          dataServer = dataPort = null
+          startDataServer().then(
             (server) => {
-              dataPort = server
-              const port = (server.address() as AddressInfo).port
-              debug(`listening on ${port} for data connection`)
-              client.respond(
-                "227",
-                format(
+              dataServer = server
+
+              const port = (server.address() as AddressInfo).port,
+                host = client.localAddress
+                  .replace(/::ffff:/g, "") // IPv4 in IPv6 prefix
+                  .split(".")
+                  .join(","),
+                response = format(
                   "Entering passive mode (%s,%d,%d)",
-                  client.localAddress
-                    .replace(/::ffff:/g, "")
-                    .split(".")
-                    .join(","),
-                  (port / 256) | 0,
-                  port % 256
+                  host,
+                  port >> 8,
+                  port & 255
                 )
-              )
+              client.respond("227", response)
             },
             (error) => {
-              SessionErrorHandler(cmd)(error)
+              client.emit("command-error", { cmd, error })
               client.respond("501", "Passive command failed")
             }
           )
         },
 
         EPRT(_: string, spec: string) {
-          const addrSpec = spec.split("|"),
-            addr = addrSpec[2],
-            port = parseInt(addrSpec[3], 10)
+          const parts = spec.split("|"),
+            host = parts[2], // could be either IPv4 or IPv6
+            port = parseInt(parts[3], 10)
           if (
-            addrSpec.length === 5 &&
+            parts.length === 5 &&
             // addr.match(/\d{1,3}(\.\d{1,3}){3}/) && // skip this check to permit IPv6
             port > 0
           ) {
-            if (dataPort instanceof Server) {
-              dataPort.close()
-            }
+            dataServer?.close()
+            dataServer = null
+            dataPort = { host, port }
 
-            dataPort = { host: addr, port }
             client.respond("200", "Extended Port command successful")
           } else {
             client.respond("501", "Extended port command failed")
@@ -514,23 +793,21 @@ export default function createFtpServer({
         },
 
         EPSV(cmd: string) {
-          if (dataPort instanceof Server) {
-            dataPort.close()
-          }
-          dataPort = undefined
-
-          startPassiveDataServer().then(
+          dataServer?.close()
+          dataServer = dataPort = null
+          startDataServer().then(
             (server) => {
-              dataPort = server
-              const port = (server.address() as AddressInfo).port
-              debug(`listening on ${port} for data connection`)
-              client.respond(
-                "229",
-                format("Entering extended passive mode (|||%d|)", port)
-              )
+              dataServer = server
+
+              const port = (server.address() as AddressInfo).port,
+                response = format(
+                  "Entering extended passive mode (|||%d|)",
+                  port
+                )
+              client.respond("229", response)
             },
             (error) => {
-              SessionErrorHandler(cmd)(error)
+              client.emit("command-error", { cmd, error })
               client.respond("501", "Extended passive command failed")
             }
           )
@@ -562,17 +839,23 @@ export default function createFtpServer({
         },
 
         PWD() {
-          client.respond("257", `"${getFolder()}" is current directory`)
+          client.respond("257", `"${store.folder}" is current directory`)
         },
 
         CWD(cmd: string, folder: string) {
-          setFolder(folder).then(
+          store.setFolder(folder).then(
             (folder) =>
               client.respond(
                 "250",
                 `CWD successful. "${folder}" is current directory`
               ),
             (error) => {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
               if (
                 error.code === StoreErrors.ENOTDIR ||
                 error.code === StoreErrors.ENOENT
@@ -581,331 +864,441 @@ export default function createFtpServer({
                 return
               }
 
-              SessionErrorHandler(cmd)(error)
               client.respond("530", "CWD not successful")
             }
           )
         },
 
         RMD(cmd: string, folder: string) {
-          if (!authenticated.allowFolderDelete || folder === "/") {
-            client.respond("550", "Permission denied")
-          } else {
-            folderDelete(folder).then(
-              () => {
-                client.respond("250", "Folder deleted successfully")
-              },
-              (error) => {
-                if (
-                  error.code === StoreErrors.ENOTDIR ||
-                  error.code === StoreErrors.ENOENT
-                ) {
-                  client.respond("550", "Folder not found")
-                  return
-                }
+          store.folderDelete(folder).then(
+            () => {
+              client.respond("250", "Folder deleted successfully")
 
-                SessionErrorHandler(cmd)(error)
-                client.respond("501", "Command failed")
-              }
-            )
-          }
-        },
-
-        MKD(cmd: string, folder: string) {
-          if (!authenticated.allowFolderCreate) {
-            client.respond("550", "Permission denied")
-          } else {
-            folderCreate(folder).then(
-              () => {
-                client.respond("250", "Folder created successfully")
-              },
-              (error) => {
-                if (error.code == StoreErrors.EEXIST) {
-                  client.respond("550", "Folder exists")
-                  return
-                }
-
-                SessionErrorHandler(cmd)(error)
-                client.respond("501", "Command failed")
-              }
-            )
-          }
-        },
-
-        LIST(cmd: string, folder: string) {
-          Promise.all([getDataSocket(), folderList(folder)]).then(
-            ([socket, stats]) => {
-              const listing = stats.map(formatListing(cmd)).join("\r\n")
-              debug(`LIST response on data channel\r\n${listing || "(empty)"}`)
-              socket.end(listing + "\r\n") // FileZilla has a cow, "TLS connection was non-properly terminated" some half-open problem?
-              client.respond(
-                "226",
-                `Successfully transferred "${resolvePath(
-                  getFolder(),
-                  folder ?? ""
-                )}"`
-              )
+              emitter.emit("remove-directory", {
+                client: clientInfo,
+                username: user.username,
+                folder: resolvePath(store.folder, folder),
+              })
             },
             (error) => {
-              SessionErrorHandler(cmd)(error)
-              client.respond("501", `Command failed`)
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (
+                error.code === StoreErrors.ENOTDIR ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "Folder not found")
+                return
+              }
+
+              client.respond("501", "Command failed")
             }
           )
         },
 
-        DELE(cmd: string, file: string) {
-          if (!authenticated.allowFileDelete) {
-            client.respond("550", "Permission denied")
-          } else {
-            fileDelete(file).then(
-              () => {
-                client.respond("250", "File deleted successfully")
-              },
-              (error) => {
-                if (error.code === StoreErrors.ENOENT) {
-                  client.respond("550", "File not found")
-                  return
-                }
+        MKD(cmd: string, folder: string) {
+          store.folderCreate(folder).then(
+            () => {
+              client.respond("250", "Folder created successfully")
 
-                SessionErrorHandler(cmd)(error)
-                client.respond("501", "Command failed")
-              }
-            )
-          }
-        },
-
-        SIZE(cmd: string, file: string) {
-          fileStats(file).then(
-            (fstat) => {
-              switch (cmd) {
-                case "SIZE":
-                  client.respond("213", fstat.size.toString())
-                  return
-                case "MDTM":
-                  client.respond("213", format_rfc3659_time(fstat.mtime))
-                  return
-              }
+              emitter.emit("create-directory", {
+                client: clientInfo,
+                username: user.username,
+                folder: resolvePath(store.folder, folder),
+              })
             },
             (error) => {
-              if (error.code === StoreErrors.ENOENT) {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (error.code == StoreErrors.EEXIST) {
+                client.respond("550", "Folder exists")
+                return
+              }
+
+              client.respond("501", "Command failed")
+            }
+          )
+        },
+
+        LIST(cmd: string, folder?: string) {
+          store
+            .folderList(folder)
+            .then((stats: Stats[]) =>
+              getDataSocket().then((socket: Writable) => {
+                folder = resolvePath(store.folder, folder ?? "")
+                const listing = stats.map(formatListing(cmd)).join("\r\n")
+                emitter.emit("trace", `>>> ${cmd} ${folder}\r\n${listing || "(empty)"}`, client) // prettier-ignore
+
+                socket.end(listing + "\r\n") // FileZilla borks: "TLS connection was non-properly terminated" some half-open problem?
+                client.respond("226", `Successfully transferred "${folder}"`)
+
+                emitter.emit("read-directory", {
+                  client: clientInfo,
+                  username: user.username,
+                  folder,
+                })
+              })
+            )
+            .catch((error) => {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (
+                error.code === StoreErrors.ENOTDIR ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "Folder not found")
+                return
+              }
+
+              // TODO: likely socket connection errors
+
+              client.respond("501", `Command failed`)
+            })
+        },
+
+        DELE(cmd: string, file: string) {
+          store.fileDelete(file).then(
+            () => {
+              client.respond("250", "File deleted successfully")
+
+              emitter.emit("delete", {
+                client: clientInfo,
+                username: user.username,
+                file: joinPath(store.folder, file),
+              })
+            },
+            (error) => {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (
+                error.code === StoreErrors.ENOTFILE ||
+                error.code === StoreErrors.ENOENT
+              ) {
                 client.respond("550", "File not found")
                 return
               }
 
-              SessionErrorHandler(cmd)(error)
+              client.respond("501", "Command failed")
+            }
+          )
+        },
+
+        SIZE(cmd: string, file: string) {
+          store.fileStats(file).then(
+            (fstat) => {
+              switch (cmd) {
+                case "SIZE":
+                  client.respond("213", fstat.size.toString())
+                  break
+                case "MDTM":
+                  client.respond("213", rfc3659_formatTime(fstat.mtime))
+                  break
+                default:
+                  return
+              }
+
+              emitter.emit("inspect", {
+                client: clientInfo,
+                username: user.username,
+                file: joinPath(store.folder, file),
+                fstat,
+              })
+            },
+            (error) => {
+              client.emit("command-error", { cmd, error })
+              if (
+                error.code === StoreErrors.ENOTFILE ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "File not found")
+                return
+              }
+
               client.respond("501", "Command failed")
             }
           )
         },
 
         RETR(cmd: string, file: string) {
-          if (!authenticated.allowFileRetrieve) {
-            client.respond("550", `Transfer failed "${file}"`)
-            // Could client connecton be waiting on passive port?
-          } else {
-            getDataSocket().then(
-              (writeSocket: Writable) =>
-                fileRetrieve(file, dataOffset)
-                  .then(
-                    (readStream) => {
-                      readStream.on("error", (error: NodeJS.ErrnoException) => {
-                        writeSocket.destroy()
-                        SessionErrorHandler(cmd)(error)
-                        if (error.code === StoreErrors.ENOENT) {
-                          client.respond("550", "File not found")
-                          return
-                        }
+          store
+            .fileRetrieve(file, dataOffset)
+            .then((readStream: Readable) =>
+              getDataSocket().then((writeSocket: Writable) => {
+                readStream.on("error", (error: NodeJS.ErrnoException) => {
+                  writeSocket.destroy()
+                  client.emit("command-error", { cmd, error })
+                  client.respond("550", `Transfer failed`)
+                })
 
-                        client.respond("550", `Transfer failed "${file}"`)
-                      })
+                writeSocket.on("error", (error) => {
+                  readStream.destroy()
+                  client.emit("command-error", { cmd, error })
+                  client.respond("426", `Client connection error"`)
+                })
 
-                      writeSocket
-                        .on("error", (error) => {
-                          readStream.destroy()
-                          SessionErrorHandler(cmd)(error)
-                          client.respond(
-                            "426",
-                            `Connection closed. Aborted transfer of "${file}"`
-                          )
-                        })
-                        .on("end", () => {
-                          client.respond(
-                            "226",
-                            `Successfully transferred "${file}"`
-                          )
-
-                          emitter.emit("download", {
-                            clientInfo,
-                            username: authenticated.username,
-                            file: joinPath(getFolder(), file),
-                          })
-                        })
-
-                      readStream
-                        // .pipe(tee(emitDebugMessage)) // log outbound stream
-                        .pipe(
-                          asciiTxfrMode
-                            ? asciify().pipe(writeSocket)
-                            : writeSocket
-                        )
-                    },
-                    (error) => {
-                      writeSocket.destroy()
-                      SessionErrorHandler(cmd)(error)
-                      client.respond("501", "Command failed")
-                    }
-                  )
-                  .finally(() => {
-                    dataOffset = 0
-                  }),
-              (error: NodeJS.ErrnoException) => {
-                SessionErrorHandler(cmd)(error)
-                client.respond("501", "Command failed")
-              }
-            )
-          }
-        },
-
-        STOR(cmd: string, file: string) {
-          if (
-            !authenticated.allowFileOverwrite &&
-            !authenticated.allowFileCreate
-          ) {
-            client.respond("550", `Transfer failed "${file}"`)
-            // Could client connecton be waiting on passive port?
-          } else {
-            // but what if allowFileOverwrite, but not allowFileCreate?
-            getDataSocket().then(
-              (readSocket: Readable) =>
-                fileStore(file, authenticated.allowFileOverwrite, dataOffset)
-                  .then(
-                    (writeStream) => {
-                      readSocket.on("error", (error: NodeJS.ErrnoException) => {
-                        writeStream.destroy()
-                        SessionErrorHandler(cmd)(error)
-                        client.respond(
-                          "426",
-                          `Connection closed. Aborted transfer of "${file}"`
-                        )
-                      })
-
-                      writeStream
-                        .on("error", (error: NodeJS.ErrnoException) => {
-                          readSocket.destroy()
-                          SessionErrorHandler(cmd)(error)
-                          if (error.code === StoreErrors.EEXIST) {
-                            client.respond("550", "File already exists")
-                            return
-                          }
-
-                          client.respond("550", `Transfer failed "${file}"`)
-                        })
-                        .on("finish", (error: NodeJS.ErrnoException) => {
-                          client.respond(
-                            "226",
-                            `Successfully transferred "${file}"`
-                          )
-
-                          emitter.emit("upload", {
-                            clientInfo,
-                            username: authenticated.username,
-                            file: joinPath(getFolder(), file),
-                          })
-                        })
-
-                      readSocket
-                        // .pipe(tee(emitDebugMessage)) // log inbound stream
-                        .pipe(
-                          asciiTxfrMode
-                            ? deasciify().pipe(writeStream)
-                            : writeStream
-                        )
-                    },
-                    (error) => {
-                      readSocket.destroy()
-                      SessionErrorHandler(cmd)(error)
-                      client.respond("501", `Transfer failed "${file}"`)
-                    }
-                  )
-                  .finally(() => {
-                    dataOffset = 0
-                  }),
-              (error: NodeJS.ErrnoException) => {
-                SessionErrorHandler(cmd)(error)
-                client.respond("501", "Command failed")
-              }
-            )
-          }
-        },
-
-        RNFR(_: string, file: string) {
-          if (!authenticated.allowFileRename) {
-            client.respond("550", "Permission denied")
-          } else {
-            fileRename(file).then(
-              (renamingFunction) => {
-                renameFileToFn = renamingFunction
-                client.respond("350", "File exists")
-              },
-              () => {
-                client.respond("550", "File does not exist")
-              }
-            )
-          }
-        },
-
-        RNTO(cmd: string, file: string) {
-          if (!authenticated.allowFileRename) {
-            client.respond("550", "Permission denied")
-          } else if (!renameFileToFn) {
-            client.respond("503", "RNFR missing")
-          } else {
-            renameFileToFn(file, authenticated.allowFileOverwrite)
-              .then(
-                () => {
-                  client.respond("250", "File renamed successfully")
-
-                  emitter.emit("rename", {
-                    clientInfo,
-                    username: authenticated.username,
-                    fileFrom: joinPath("/", renameFileToFn.fromFile),
-                    fileTo: joinPath(getFolder(), file),
-                  })
-                },
-                (error) => {
-                  if (error.code === StoreErrors.EEXIST) {
-                    client.respond("550", "File already exists")
-                    return
-                  }
-
-                  SessionErrorHandler(cmd)(error)
-                  client.respond("550", "File rename failed")
+                if (asciiTxfrMode) {
+                  // convert from server native text encoding
+                  writeSocket = asciify().pipe(writeSocket)
                 }
-              )
-              .finally(() => {
-                renameFileToFn = undefined
-              })
-          }
-        },
 
-        MFMT(cmd: string, time: string, file: string) {
-          const mtime = parse_rfc3659_time(time)
-          fileSetAttributes(file, { mtime }).then(
-            () => {
-              client.respond("253", "Date/time changed okay")
-            },
-            (error) => {
-              if (error.code === StoreErrors.ENOENT) {
-                client.respond("550", "File does not exist")
+                let octets = 0
+                const hash = createHash("sha256")
+                readStream
+                  .pipe(
+                    tee((_, chunk) => {
+                      octets += chunk.length
+                      hash.write(chunk)
+                    })
+                  )
+                  .pipe(
+                    writeSocket.on("finish", () => {
+                      client.respond(
+                        "226",
+                        `Successfully transferred "${file}"`
+                      )
+
+                      emitter.emit("download", {
+                        client: clientInfo,
+                        username: user.username,
+                        file: joinPath(store.folder, file),
+                        sha256: hash.digest("hex"), // if offset > 0, this is signature of only part of the file
+                        offset: dataOffset,
+                        size: octets,
+                      })
+                      dataOffset = 0
+                    })
+                  )
+              })
+            )
+            .catch((error: NodeJS.ErrnoException) => {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
                 return
               }
 
-              SessionErrorHandler(cmd)(error)
+              if (
+                error.code === StoreErrors.ENOTFILE ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "File not found")
+                return
+              }
+
+              // TODO: likely socket connection errors
+
+              client.respond("501", "Command failed")
+            })
+        },
+
+        STOR(cmd: string, file: string) {
+          store
+            .fileStore(file, dataOffset)
+            .then((writeStream: Writable) =>
+              getDataSocket().then(
+                (readSocket: Readable) => {
+                  readSocket.on("error", (error: NodeJS.ErrnoException) => {
+                    writeStream.destroy()
+                    client.emit("command-error", { cmd, error })
+                    client.respond("426", `Client connection error"`)
+                  })
+
+                  writeStream.on("error", (error: NodeJS.ErrnoException) => {
+                    readSocket.destroy()
+                    client.emit("command-error", { cmd, error })
+                    client.respond("550", `Transfer failed`)
+                  })
+
+                  if (asciiTxfrMode) {
+                    // convert to server native text encoding
+                    readSocket = readSocket.pipe(deasciify())
+                  }
+
+                  let octets = 0
+                  const hash = createHash("sha256")
+                  readSocket
+                    .pipe(
+                      tee((_, chunk) => {
+                        octets += chunk.length
+                        hash.write(chunk)
+                      })
+                    )
+                    .pipe(
+                      writeStream.on("finish", () => {
+                        client.respond(
+                          "226",
+                          `Successfully transferred "${file}"`
+                        )
+
+                        emitter.emit("upload", {
+                          client: clientInfo,
+                          username: user.username,
+                          file: joinPath(store.folder, file),
+                          sha256: hash.digest("hex"), // if offset > 0, this is signature of only part of the file
+                          overwrite: "overwrite" in writeStream,
+                          offset: dataOffset,
+                          size: octets,
+                        })
+                        dataOffset = 0
+                      })
+                    )
+                },
+                (error) => {
+                  writeStream.destroy()
+                  return Promise.reject(error)
+                }
+              )
+            )
+            .catch((error: NodeJS.ErrnoException) => {
+              client.emit("command-error", { cmd, error })
+              if (
+                error.code === StoreErrors.EPERM ||
+                error.code === StoreErrors.EEXIST
+              ) {
+                if (error.code === StoreErrors.EEXIST) {
+                  // actually a permissions problem, but accomodating an old test
+                  client.respond("550", "File already exists")
+                  return
+                }
+
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (error.code === StoreErrors.ENOTDIR) {
+                client.respond("550", "Folder not found")
+                return
+              }
+
+              // TODO: likely socket connection errors
+
+              client.respond("501", "Command failed")
+            })
+        },
+
+        RNFR(cmd: string, file: string) {
+          store.fileRename(file).then(
+            (renamingFunction) => {
+              renameFile = renamingFunction
+              client.respond("350", "File exists")
+            },
+            (error: NodeJS.ErrnoException) => {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (
+                error.code === StoreErrors.ENOTFILE ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "File not found")
+                return
+              }
+
+              client.respond("501", "Command failed")
+            }
+          )
+        },
+
+        RNTO(cmd: string, file: string) {
+          if (!renameFile) {
+            client.respond("503", "RNFR missing")
+            return
+          }
+
+          renameFile(file).then(
+            () => {
+              client.respond("250", "File renamed successfully")
+
+              emitter.emit("rename", {
+                client: clientInfo,
+                username: user.username,
+                fileFrom: joinPath("/", renameFile.fromFile),
+                fileTo: joinPath(store.folder, file),
+              })
+              renameFile = undefined
+            },
+            (error) => {
+              client.emit("command-error", { cmd, error })
+              if (
+                error.code === StoreErrors.EPERM ||
+                error.code === StoreErrors.EEXIST
+              ) {
+                if (error.code === StoreErrors.EEXIST) {
+                  // actually a permissions problem, but accomodating an old test
+                  client.respond("550", "File already exists")
+                  return
+                }
+
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (error.code === StoreErrors.ENOTDIR) {
+                client.respond("550", "Folder not found")
+                return
+              }
+
+              // client.respond("501", "Command failed")
+              client.respond("550", "File rename failed")
+            }
+          )
+        },
+
+        MFMT(cmd: string, time: string, file: string) {
+          const mtime = rfc3659_parseTime(time)
+          store.fileSetAttributes(file, { mtime }).then(
+            ([fstatOriginal, fstatNew]) => {
+              client.respond("253", "Modified date/time")
+
+              emitter.emit("modify", {
+                client: clientInfo,
+                username: user.username,
+                file: joinPath(store.folder, file),
+                fstatOriginal,
+                fstatNew,
+              })
+            },
+            (error) => {
+              client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
+              if (
+                error.code === StoreErrors.ENOTFILE ||
+                error.code === StoreErrors.ENOENT
+              ) {
+                client.respond("550", "File not found")
+                return
+              }
+
               client.respond("501", "Command failed")
             }
           )
         },
       }
+
+    // method aliases
     Object.assign(authenticatedMethods, {
       QUIT: preAuthMethods.QUIT,
       RMDA: authenticatedMethods.RMD,
@@ -914,9 +1307,9 @@ export default function createFtpServer({
       MDTM: authenticatedMethods.SIZE,
     })
 
-    // unimplemented:
+    // unimplemented methods:
     //  SPSV, LPSV, LPRT
-    //  MLST (like MDTM and SIZE?)
+    //  MLST (like MDTM and SIZE)
     //  MFCT, MFF (like MFMT)
     //  ABOR, ACCT, NOOP, REIN, STAT
     //  APPE, CDUP, SMNT, STOU
@@ -925,192 +1318,9 @@ export default function createFtpServer({
       client.setTimeout(timeout, preAuthMethods.QUIT)
     }
 
-    function resetSession() {
-      authUser = null
-      authenticated = null
-
-      asciiTxfrMode = false
-      pbszReceived = false
-      protectedMode = false
-      dataOffset = 0
-      ;(dataPort as ConnectionSource)?.close?.()
-      dataPort = null
-      renameFileToFn = null
-    }
-
-    function setUser(credential: Credential) {
-      authUser = null
-      authenticated = credential
-      ;({
-        setFolder,
-        getFolder,
-
-        folderDelete,
-        folderCreate,
-        folderList,
-
-        fileStats,
-        fileDelete,
-        fileRetrieve,
-        fileStore,
-        fileRename,
-        fileSetAttributes,
-      } = storeFactory(client, credential, { basefolder: ftpRoot.toString() }))
-
-      emitter.emit("login", {
-        clientInfo,
-        username: authenticated.username,
-        openSessions: clientSessions.size,
-      })
-    }
-
-    function startPassiveDataServer() {
-      const addr = "0.0.0.0" // Server binds to default address, 0.0.0.0 or ipv6 ::
-
-      return new Promise<number>((resolve, reject) => {
-        // 'maxConnections' is the size of a block of ports for incoming data connections
-        // TODO: avoid port scanning
-        // TODO: if TCP and TLS ports are both listening, may need double maxConnections?
-        // TODO: if minDataPort is not set, ignore maxConnections & just listen on a random port
-        if (minDataPort > 0 && minDataPort < 65535) {
-          return (function checkAvailablePort(port: number) {
-            createServer()
-              .once("close", function () {
-                resolve(port)
-              })
-              .once("error", function () {
-                if (port < minDataPort + maxConnections) {
-                  return checkAvailablePort(++port) // recurse
-                }
-                reject(Error("exceeded maxConnections"))
-              })
-              .listen(port, function () {
-                this.close()
-              })
-          })(minDataPort)
-        }
-
-        reject(Error("minDataPort out-of-range 1-65535"))
-      }).then(async (port) => {
-        debug(
-          `starting passive data server addr[${addr}] port[${port}] secure[${
-            "encrypted" in client && protectedMode
-          }]`
-        )
-
-        const dataPort =
-          "encrypted" in client && protectedMode
-            ? createSecureServer(await secureOptions, function () {
-                debug(`secure passive data connection established`)
-                this.on(
-                  "error",
-                  SessionErrorHandler("secure passive data connection")
-                ).on("close", () => {
-                  debug(`secure passive data connection has closed`)
-                })
-              })
-            : createServer(function () {
-                debug(`passive data connection established`)
-                this.on(
-                  "error",
-                  SessionErrorHandler("passive data connection")
-                ).on("close", () => {
-                  debug(`passive data connection has closed`)
-                })
-              })
-
-        dataPort.maxConnections = 1
-        if (dataTimeout ?? timeout) {
-          dataPort.on("connection", (socket) => {
-            socket.setTimeout(dataTimeout ?? timeout, () => {
-              socket.destroy()
-            })
-          })
-        }
-
-        // TODO: close server if no connection made within a reasonable time
-
-        // resolve the connection source when the server is successfully listening
-        return new Promise<ConnectionSource>((resolve, reject) => {
-          createConnectionSource(dataPort)
-            .on("error", reject)
-            .listen(port, function () {
-              debug(`passive data port listening`)
-              this.off("error", reject).on(
-                "error",
-                SessionErrorHandler("passive data port")
-              )
-              resolve(this)
-            })
-        })
-      })
-    }
-
-    function getDataSocket() {
-      if (dataPort instanceof Server) {
-        client.respond("150", "Awaiting passive connection")
-        return dataPort.next().then(({ value: socket, done }) => {
-          if (done) {
-            // the iterator is closed (due to error on listening port)
-            throw new Error("passive data port closed")
-          }
-
-          return socket
-        })
-      }
-
-      if (dataPort instanceof Object) {
-        client.respond("150", "Opening data connection")
-
-        // resolve a successful connection
-        return new Promise<Socket>((resolve, reject) => {
-          const { host: addr, port } = dataPort as TcpSocketConnectOpts
-          debug(
-            `connecting client data socket addr[${addr}] port[${port}] secure[${
-              "encrypted" in client && protectedMode
-            }]`
-          )
-
-          const socket = connect(dataPort as TcpSocketConnectOpts, function () {
-            debug(`active data connection to client established`)
-            this.off("error", reject)
-
-            if ("encrypted" in client && protectedMode) {
-              secureContext.then((secureContext) => {
-                const socket = new TLSSocket(this, {
-                  secureContext,
-                  isServer: true,
-                })
-
-                // assume TLS negotiation is synchronous with constructor
-                debug(`secure active data connection established`)
-                resolve(socket)
-              }, reject)
-            } else {
-              resolve(this)
-            }
-          }).on("error", reject)
-        }).then((socket) => {
-          if (dataTimeout ?? timeout) {
-            socket.setTimeout(dataTimeout ?? timeout, () => {
-              socket.destroy()
-            })
-          }
-
-          return socket
-            .on("error", SessionErrorHandler("active data connection"))
-            .on("close", () => {
-              debug(`active data connection has closed`)
-            })
-        })
-      }
-
-      return Promise.reject(Error("active or passive mode not selected"))
-    }
-
     function CmdHandler(buf: Buffer) {
       const [cmd, ...args] = buf.toString().trim().split(/\s+/)
-      trace(`>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : args.join(" ")}]`)
+      emitter.emit("trace", `>>> cmd[${cmd}] arg[${cmd === "PASS" ? "***" : args.join(" ")}]`, client) // prettier-ignore
 
       try {
         if (cmd in preAuthMethods) {
@@ -1120,7 +1330,7 @@ export default function createFtpServer({
             ...args
           )
         } else if (cmd in authenticatedMethods) {
-          if (!authenticated) {
+          if (!user) {
             client.respond("530", "Not logged in")
             return
           }
@@ -1133,47 +1343,10 @@ export default function createFtpServer({
         } else {
           client.respond("500", "Command not implemented")
         }
-      } catch (err) {
+      } catch (error) {
+        client.emit("command-error", { cmd: `${[cmd, ...args].join(" ")}`, error }) // prettier-ignore
         client.respond("550", "Unexpected server error")
-        SessionErrorHandler(`command exception[${[cmd, ...args].join(" ")}]`)(
-          err
-        )
       }
     }
-
-    function SessionErrorHandler(socketType: string) {
-      return function error(error: NodeJS.ErrnoException) {
-        emitter.emit(
-          "session-error",
-          `${new Date().toISOString()} ${clientInfo}-${socketType} error ${inspect(
-            error,
-            {
-              showHidden: false,
-              depth: null,
-              breakLength: Infinity,
-            }
-          )}`
-        )
-      }
-    }
-
-    function trace(msg: string | { toString: () => string }) {
-      emitter.emit("trace", `${new Date().toISOString()} ${clientInfo} ${msg}`)
-    }
-
-    function debug(msg: string | { toString: () => string }) {
-      emitter.emit("debug", `${new Date().toISOString()} ${clientInfo} ${msg}`)
-    }
-  }
-
-  function ServerErrorHandler(error: NodeJS.ErrnoException) {
-    emitter.emit(
-      "server-error",
-      `server error ${new Date().toISOString()} ${inspect(error, {
-        showHidden: false,
-        depth: null,
-        breakLength: Infinity,
-      })}`
-    )
   }
 }

@@ -86,7 +86,7 @@ export class ExpectSocket extends PromiseSocket {
     await this.end()
   }
   async receive() {
-    const content = await this.read()
+    const content = await this.readAll()
     await this.end()
     return content?.toString().trim()
   }

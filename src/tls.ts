@@ -10,8 +10,10 @@
 import { execFileSync } from "child_process"
 import { existsSync, readFileSync } from "fs"
 
-const crtFile = "server.crt",
-  keyFile = "server.key"
+// TODO:  prefer process.env["SERVER_CERT"] and process.env["SERVER_KEY"]
+// TODO:  if creating, use temp names or temp directory
+const crtFile = "certs/server.crt",
+  keyFile = "certs/server.key"
 if (!existsSync(crtFile) || !existsSync(keyFile)) {
   // one-shot self-signed cert:
   execFileSync(

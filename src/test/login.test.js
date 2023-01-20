@@ -267,7 +267,7 @@ test("login with active reload user settings", async () => {
     username: "michael",
     password: "myers",
   })
-  server.reloadAuth({ user: users })
+  server.emit("reloadAuth", { user: users })
 
   const cmdSocket3 = new ExpectSocket()
   expect(await cmdSocket3.connect(cmdPortTCP, localhost).response()).toBe(

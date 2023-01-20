@@ -24,10 +24,10 @@ export function deasciify(): Transform {
   })
 }
 
-export function tee(tee: (chunk: Buffer) => void): Transform {
+export function tee(ƒ: (error?: Error, chunk?: Buffer) => void): Transform {
   return new Transform({
-    transform(chunk, encoding, next) {
-      tee(chunk)
+    transform(chunk, _encoding, next) {
+      ƒ(null, chunk)
       next(null, chunk)
     },
   })

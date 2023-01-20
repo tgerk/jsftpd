@@ -1,4 +1,4 @@
-export function formatDate_Mmm_DD_HH_mm(mtime: Date): string {
+export function common_formatTime(mtime: Date): string {
   // unix ls -l shows "Mmm DD hh:mm" if within past 182 days, else "Mmm DD  YYYY"
   // unix ls -lT show "Mmm DD hh:mm:ss YYYY"
   const { year, month, day, hour, minute } = new Intl.DateTimeFormat("en-US", {
@@ -27,7 +27,7 @@ export function formatDate_Mmm_DD_HH_mm(mtime: Date): string {
   return `${month} ${day.padStart(2, " ")}  ${year}`
 }
 
-export function formatDate_MSDOS(mtime: Date): string {
+export function MSDOS_formatTime(mtime: Date): string {
   const { year, month, day, hour, minute, dayPeriod } = new Intl.DateTimeFormat(
     "en-US",
     {
@@ -55,7 +55,7 @@ export function formatDate_MSDOS(mtime: Date): string {
   )}-${year} ${hour}:${minute}${dayPeriod}`
 }
 
-export function format_rfc3659_time(mtime: Date): string {
+export function rfc3659_formatTime(mtime: Date): string {
   mtime = new Date(mtime)
   const MM = (mtime.getUTCMonth() + 1).toString().padStart(2, "0"),
     DD = mtime.getUTCDate().toString().padStart(2, "0"),
@@ -66,7 +66,7 @@ export function format_rfc3659_time(mtime: Date): string {
   return `${mtime.getUTCFullYear()}${MM}${DD}${H}${M}${S}.${s}`
 }
 
-export function parse_rfc3659_time(rfc3659_time: string): Date {
+export function rfc3659_parseTime(rfc3659_time: string): Date {
   const Y = rfc3659_time.substring(0, 4),
     M = rfc3659_time.substring(4, 6),
     D = rfc3659_time.substring(6, 8),

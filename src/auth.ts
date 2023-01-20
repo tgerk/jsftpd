@@ -7,8 +7,10 @@ enum permissions {
   FileOverwrite = "FileOverwrite",
   FileDelete = "FileDelete",
   FileRename = "FileRename",
+  FileSetAttributes = "FileSetAttributes",
   FolderDelete = "FolderDelete",
   FolderCreate = "FolderCreate",
+  // access to set folder, folder listing, and file attributes are uncontrolled
 }
 
 type Permissions = {

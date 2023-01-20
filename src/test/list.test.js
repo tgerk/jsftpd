@@ -71,7 +71,7 @@ test("test LIST message", async () => {
   )
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()
@@ -110,7 +110,7 @@ test("test MLSD message", async () => {
   expect(data).toMatch("john")
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()
@@ -150,7 +150,7 @@ test("test MLSD message over passive secure connection", async () => {
   )
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   const dataSocket = new ExpectSocket()
@@ -202,7 +202,7 @@ test("test MLSD message over secure active connection", async () => {
   ).toBe("200 Extended Port command successful")
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
-    "150 Opening data connection"
+    "150 Opening active data connection"
   )
 
   expect(
@@ -246,7 +246,7 @@ test("test MLSD message with handler", async () => {
   expect(await dataSocket.connect(dataPort, localhost).receive()).toBe("")
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()

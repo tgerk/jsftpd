@@ -1,11 +1,11 @@
 import { format } from "node:util"
 
 import {
-  format_rfc3659_time,
-  formatDate_Mmm_DD_HH_mm,
-  formatDate_MSDOS,
+  rfc3659_formatTime,
+  common_formatTime,
+  MSDOS_formatTime,
 } from "./time.js"
-import type { Stats } from "../store.js"
+import type { Stats } from "./store.js"
 
 export function formatListing(cmd = "LIST") {
   switch (cmd) {
@@ -17,12 +17,12 @@ export function formatListing(cmd = "LIST") {
         fstat.isDirectory()
           ? format(
               "type=dir;modify=%s; %s",
-              format_rfc3659_time(fstat.mtime),
+              rfc3659_formatTime(fstat.mtime),
               fstat.name
             )
           : format(
               "type=file;modify=%s;size=%d; %s",
-              format_rfc3659_time(fstat.mtime),
+              rfc3659_formatTime(fstat.mtime),
               fstat.size,
               fstat.name
             )
@@ -33,12 +33,12 @@ export function formatListing(cmd = "LIST") {
         fstat.isDirectory()
           ? format(
               "%s       <DIR>          %s",
-              formatDate_MSDOS(fstat.mtime),
+              MSDOS_formatTime(fstat.mtime),
               fstat.name
             )
           : format(
               "%s %s %s",
-              formatDate_MSDOS(fstat.mtime),
+              MSDOS_formatTime(fstat.mtime),
               String(fstat.size).padStart(20, " "),
               fstat.name
             )
@@ -51,13 +51,13 @@ export function formatListing(cmd = "LIST") {
           ? format(
               "dr--r--r-- 1 ? ? %s %s %s", // #links, uid, gid unimportant
               "0".padStart(14, " "),
-              formatDate_Mmm_DD_HH_mm(fstat.mtime),
+              common_formatTime(fstat.mtime),
               fstat.name
             )
           : format(
               "-r--r--r-- 1 ? ? %s %s %s", // #links, uid, gid unimportant
               String(fstat.size).padStart(14, " "),
-              formatDate_Mmm_DD_HH_mm(fstat.mtime),
+              common_formatTime(fstat.mtime),
               fstat.name
             )
   }

@@ -88,7 +88,7 @@ test("test outbound filename transformation", async () => {
   expect(data).toBe("O0123")
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()
@@ -129,7 +129,7 @@ test("test inbound filename transformation", async () => {
   )
 
   expect(await cmdSocket.command("STOR O0123").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   const dataSocket = new ExpectSocket()
@@ -153,7 +153,7 @@ test("test inbound filename transformation", async () => {
   await dataSocket.end()
 
   const response = await cmdSocket.response()
-  expect(response).toMatch("150 Awaiting passive connection")
+  expect(response).toMatch("150 Awaiting passive data connection")
   expect(response).toMatch('226 Successfully transferred "/"')
 
   await cmdSocket.end()

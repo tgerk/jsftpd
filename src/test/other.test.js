@@ -466,7 +466,7 @@ test("test RMD message", async () => {
   )
 
   expect(await cmdSocket.command("RMD /pete").response()).toBe(
-    "250 Folder deleted successfully"
+    "550 Folder not found"
   )
 
   expect(await cmdSocket.command("RMD john").response()).toBe(
@@ -556,6 +556,7 @@ test("test MFMT message", async () => {
     user: [{ ...john }],
     allowLoginWithoutPassword: true,
     allowUserFileCreate: true,
+    allowUserFileSetAttributes: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -572,7 +573,7 @@ test("test MFMT message", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -584,14 +585,14 @@ test("test MFMT message", async () => {
 
   expect(
     await cmdSocket.command("MFMT 20250215123456 mytestfile").response()
-  ).toBe("253 Date/time changed okay")
+  ).toBe("253 Modified date/time")
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   dataSocket = new ExpectSocket()
@@ -606,41 +607,13 @@ test("test MFMT message", async () => {
   await cmdSocket.end()
 })
 
-test("test MFMT message with handler", async () => {
-  server = createFtpServer({
-    port: cmdPortTCP,
-    user: [john],
-    allowLoginWithoutPassword: true,
-    store: addFactoryExtensions({
-      fileSetAttributes: jest.fn().mockResolvedValue(),
-    }),
-  })
-
-  let cmdSocket = new ExpectSocket()
-  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
-    "220 Welcome"
-  )
-
-  expect(await cmdSocket.command("USER john").response()).toBe(
-    "232 User logged in"
-  )
-
-  expect(
-    await cmdSocket.command("MFMT 2022020220202202 mytestfile").response()
-  ).toBe("253 Date/time changed okay")
-
-  await cmdSocket.end()
-})
-
-test("test MFMT message file does not exist", async () => {
+test("test MFMT message no permission", async () => {
   server = createFtpServer({
     port: cmdPortTCP,
     minDataPort: dataPort,
-    user: [john],
+    user: [{ ...john }],
     allowLoginWithoutPassword: true,
     allowUserFileCreate: true,
-    allowUserFileOverwrite: true,
-    allowUserFileRename: true,
   })
 
   let cmdSocket = new ExpectSocket()
@@ -657,7 +630,76 @@ test("test MFMT message file does not exist", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
+  )
+
+  let dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
+
+  expect(await cmdSocket.response()).toBe(
+    '226 Successfully transferred "mytestfile"'
+  )
+
+  expect(
+    await cmdSocket.command("MFMT 20250215123456 mytestfile").response()
+  ).toBe("550 Permission denied")
+
+  await cmdSocket.end()
+})
+
+test("test MFMT message with handler", async () => {
+  server = createFtpServer({
+    port: cmdPortTCP,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    store: addFactoryExtensions({
+      fileSetAttributes() { return Promise.resolve([{}, {}])},
+    }),
+  })
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(
+    await cmdSocket.command("MFMT 2022020220202202 mytestfile").response()
+  ).toBe("253 Modified date/time")
+
+  await cmdSocket.end()
+})
+
+test("test MFMT message file does not exist", async () => {
+  server = createFtpServer({
+    port: cmdPortTCP,
+    minDataPort: dataPort,
+    user: [john],
+    allowLoginWithoutPassword: true,
+    allowUserFileCreate: true,
+    allowUserFileOverwrite: true,
+    allowUserFileRename: true,
+    allowUserFileSetAttributes: true
+  })
+
+  let cmdSocket = new ExpectSocket()
+  expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
+    "220 Welcome"
+  )
+
+  expect(await cmdSocket.command("USER john").response()).toBe(
+    "232 User logged in"
+  )
+
+  expect(await cmdSocket.command("EPSV").response()).toBe(
+    `229 Entering extended passive mode (|||${dataPort}|)`
+  )
+
+  expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -669,7 +711,7 @@ test("test MFMT message file does not exist", async () => {
 
   expect(
     await cmdSocket.command("MFMT 20150215120000 /someotherfile").response()
-  ).toBe("550 File does not exist")
+  ).toBe("550 File not found")
 
   await cmdSocket.end()
 })
@@ -698,7 +740,7 @@ test("test DELE message without permission", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -738,7 +780,7 @@ test("test DELE message relative path", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -783,7 +825,7 @@ test("test DELE message absolute path", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -823,7 +865,7 @@ test("test SIZE message", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -908,7 +950,7 @@ test("test PORT message", async () => {
   )
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
-    "150 Opening data connection"
+    "150 Opening active data connection"
   )
 
   const data = await (await dataServer.getConnection()).receive()
@@ -956,7 +998,7 @@ test("test EPRT message", async () => {
   ).toBe("200 Extended Port command successful")
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
-    "150 Opening data connection"
+    "150 Opening active data connection"
   )
 
   const data = await (await dataServer.getConnection()).receive()

@@ -46,6 +46,15 @@ test("test RETR message not allowed", async () => {
     user: [{ ...john, allowUserFileRetrieve: false }],
     allowLoginWithoutPassword: true,
   })
+  // .on("listening", function ({ server, basefolder }) {
+  //   console.log("listening", server.address(), basefolder)
+  // })
+  // .on("error", console.error)
+  // .on("trace", (message) => console.info(message))
+  // .on("debug", (message) => console.debug(message))
+  // .on("session", (session) => {
+  //   session.on("command-error", console.error).on("port-error", console.error)
+  // })
 
   let cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -61,7 +70,7 @@ test("test RETR message not allowed", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -72,7 +81,7 @@ test("test RETR message not allowed", async () => {
   )
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toBe(
-    '550 Transfer failed "mytestfile"'
+    "550 Permission denied"
   )
 
   await cmdSocket.end()
@@ -100,7 +109,7 @@ test("test RETR message", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -111,16 +120,11 @@ test("test RETR message", async () => {
   )
 
   expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "550 File not found"
   )
 
-  dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
-
-  expect(await cmdSocket.response()).toMatch("550 File not found")
-
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   dataSocket = new ExpectSocket()
@@ -161,7 +165,7 @@ test("test RETR message with ASCII", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -176,16 +180,11 @@ test("test RETR message with ASCII", async () => {
   )
 
   expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "550 File not found"
   )
 
-  dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
-
-  expect(await cmdSocket.response()).toBe("550 File not found")
-
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   dataSocket = new ExpectSocket()
@@ -212,7 +211,7 @@ test("test RETR message with handler", async () => {
       new Readable({
         read: function () {
           this.push("SOMETESTCONTENT")
-          this.destroy()
+          this.push(null) // EOF
         },
       })
     )
@@ -241,7 +240,9 @@ test("test RETR message with handler", async () => {
   )
 
   await cmdSocket.command("STOR mytestfile")
-  expect(await cmdSocket.response()).toBe("150 Awaiting passive connection")
+  expect(await cmdSocket.response()).toBe(
+    "150 Awaiting passive data connection"
+  )
 
   let dataSocket = new ExpectSocket()
   await dataSocket.connect(dataPort, localhost).send("SOMETESTCONTENT")
@@ -251,13 +252,14 @@ test("test RETR message with handler", async () => {
   )
 
   await cmdSocket.command("RETR mytestfile")
-
-  dataSocket = new ExpectSocket()
-  expect(await dataSocket.connect(dataPort, localhost).receive()).toMatch(
-    "SOMETESTCONTENT"
+  expect(await cmdSocket.response()).toMatch(
+    "150 Awaiting passive data connection"
   )
 
-  expect(await cmdSocket.response()).toMatch("150 Awaiting passive connection")
+  dataSocket = new ExpectSocket()
+  await dataSocket.connect(dataPort, localhost)
+  expect(await dataSocket.receive()).toMatch("SOMETESTCONTENT")
+
   expect(await cmdSocket.response()).toMatch(
     '226 Successfully transferred "mytestfile"'
   )
@@ -279,7 +281,7 @@ test("test RETR message with handler fails", async () => {
     fileRetrieve = jest.fn().mockResolvedValueOnce(
       new Readable({
         read: function () {
-          this.destroy(Error("mock"))
+          this.destroy(Error("simulated"))
         },
       })
     )
@@ -308,7 +310,7 @@ test("test RETR message with handler fails", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toBe(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   let dataSocket = new ExpectSocket()
@@ -323,14 +325,14 @@ test("test RETR message with handler fails", async () => {
   )
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   dataSocket = new ExpectSocket()
-  const data = await dataSocket.connect(dataPort, localhost).receive()
-  expect(data).toBe(undefined)
+  await dataSocket.connect(dataPort, localhost)
+  expect(await dataSocket.receive()).toBe("")
 
-  expect(await cmdSocket.response()).toMatch('550 Transfer failed "mytestfile"')
+  expect(await cmdSocket.response()).toMatch("550 Transfer failed")
 
   expect(fileStore).toBeCalledTimes(1)
   expect(fileRetrieve).toBeCalledTimes(1)
@@ -361,7 +363,7 @@ test("test RETR message no active or passive mode", async () => {
   server._useHdl = true
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toBe(
-    "501 Command failed"
+    "550 File not found"
   )
 
   await cmdSocket.end()
@@ -400,14 +402,13 @@ test("test RETR over secure passive connection", async () => {
     `229 Entering extended passive mode (|||${dataPort}|)`
   )
 
-  const dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
-
   expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
+  const dataSocket = new ExpectSocket()
   await dataSocket
+    .connect(dataPort, localhost)
     .startTLS({ rejectUnauthorized: false })
     .send("SOMETESTCONTENT")
 
@@ -417,7 +418,7 @@ test("test RETR over secure passive connection", async () => {
 
   // TODO: does this fail b/c passive port is not prepared for a second connection?
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
-    "150 Awaiting passive connection"
+    "150 Awaiting passive data connection"
   )
 
   expect(
@@ -471,7 +472,7 @@ test("test RETR over active secure connection", async () => {
   )
 
   expect(await cmdSocket.command("STOR mytestfile").response()).toMatch(
-    "150 Opening data connection"
+    "150 Opening active data connection"
   )
 
   const storSocket = await dataServer.getConnection()
@@ -484,7 +485,7 @@ test("test RETR over active secure connection", async () => {
   )
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
-    "150 Opening data connection"
+    "150 Opening active data connection"
   )
 
   const retrSocket = await dataServer.getConnection()

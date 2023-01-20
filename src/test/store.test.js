@@ -45,16 +45,16 @@ test("test STOR message without permission", async () => {
     user: [{ ...john, allowUserFileCreate: false }],
     allowLoginWithoutPassword: true,
   })
-    // .on("listening", function ({ server, basefolder }) {
-    //   console.log("listening", server.address(), basefolder)
-    // })
-    // .on("session", (session) => {
-    //   session.on("command-error", console.error)
-    //   session.on("port-error", console.error)
-    // })
-    // .on("trace", (message) => console.info(message))
-    // .on("debug", (message) => console.debug(message))
-    // .on("error", console.error)
+  // .on("listening", function ({ server, basefolder }) {
+  //   console.log("listening", server.address(), basefolder)
+  // })
+  // .on("session", (session) => {
+  //   session.on("command-error", console.error)
+  //   session.on("port-error", console.error)
+  // })
+  // .on("trace", (message) => console.info(message))
+  // .on("debug", (message) => console.debug(message))
+  // .on("error", console.error)
 
   const cmdSocket = new ExpectSocket()
   expect(await cmdSocket.connect(cmdPortTCP, localhost).response()).toBe(
@@ -376,7 +376,7 @@ test("test STOR message with handler fails", async () => {
 
   await dataSocket.send("SOMETESTCONTENT")
 
-  expect(await cmdSocket.response()).toBe('550 Transfer failed')
+  expect(await cmdSocket.response()).toBe("550 Transfer failed")
 
   expect(fileStore).toBeCalledTimes(1)
   expect(fileStore).toHaveBeenCalledWith("mytestfile", 0)

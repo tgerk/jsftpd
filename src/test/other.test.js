@@ -653,7 +653,9 @@ test("test MFMT message with handler", async () => {
     user: [john],
     allowLoginWithoutPassword: true,
     store: addFactoryExtensions({
-      fileSetAttributes() { return Promise.resolve([{}, {}])},
+      fileSetAttributes() {
+        return Promise.resolve([{}, {}])
+      },
     }),
   })
 
@@ -682,7 +684,7 @@ test("test MFMT message file does not exist", async () => {
     allowUserFileCreate: true,
     allowUserFileOverwrite: true,
     allowUserFileRename: true,
-    allowUserFileSetAttributes: true
+    allowUserFileSetAttributes: true,
   })
 
   let cmdSocket = new ExpectSocket()

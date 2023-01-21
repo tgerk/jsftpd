@@ -15,7 +15,7 @@ import {
   ListenOptions,
   TcpSocketConnectOpts,
 } from "node:net"
-import { join as joinPath, resolve as resolvePath } from "node:path"
+import { resolve as resolvePath } from "node:path"
 import type { Readable, Writable } from "node:stream"
 import {
   TLSSocket,
@@ -694,20 +694,21 @@ export default function createFtpServer({
         PROT(_: string, protection: string) {
           if (!pbszReceived) {
             client.respond("503", "PBSZ missing")
-          } else
-            switch (protection) {
-              case "P": // private, i.e. SSL
-              case "C": // clear
-                protectedMode = protection === "P"
-                client.respond("200", `Protection level is ${protection}`)
-                break
-              default:
-                client.respond("534", "Protection level must be C or P")
-            }
+            return
+          }
+
+          switch (protection) {
+            case "P": // private, i.e. SSL
+            case "C": // clear
+              protectedMode = protection === "P"
+              client.respond("200", `Protection level is ${protection}`)
+              break
+            default:
+              client.respond("534", "Protection level must be C or P")
+          }
         },
 
         OPTS(_: string, opt: string, value: string) {
-          opt = opt.toLowerCase()
           switch (opt.toLowerCase()) {
             case "utf8":
               switch (value.toLowerCase()) {
@@ -864,7 +865,7 @@ export default function createFtpServer({
                 return
               }
 
-              client.respond("530", "CWD not successful")
+              client.respond("501", "Command failed")
             }
           )
         },
@@ -976,7 +977,7 @@ export default function createFtpServer({
               emitter.emit("delete", {
                 client: clientInfo,
                 username: user.username,
-                file: joinPath(store.folder, file),
+                file: resolvePath(store.folder, file),
               })
             },
             (error) => {
@@ -1016,12 +1017,17 @@ export default function createFtpServer({
               emitter.emit("inspect", {
                 client: clientInfo,
                 username: user.username,
-                file: joinPath(store.folder, file),
+                file: resolvePath(store.folder, file),
                 fstat,
               })
             },
             (error) => {
               client.emit("command-error", { cmd, error })
+              if (error.code === StoreErrors.EPERM) {
+                client.respond("550", "Permission denied")
+                return
+              }
+
               if (
                 error.code === StoreErrors.ENOTFILE ||
                 error.code === StoreErrors.ENOENT
@@ -1040,7 +1046,7 @@ export default function createFtpServer({
             .fileRetrieve(file, dataOffset)
             .then((readStream: Readable) =>
               getDataSocket().then((writeSocket: Writable) => {
-                readStream.on("error", (error: NodeJS.ErrnoException) => {
+                readStream.on("error", (error) => {
                   writeSocket.destroy()
                   client.emit("command-error", { cmd, error })
                   client.respond("550", `Transfer failed`)
@@ -1076,7 +1082,7 @@ export default function createFtpServer({
                       emitter.emit("download", {
                         client: clientInfo,
                         username: user.username,
-                        file: joinPath(store.folder, file),
+                        file: resolvePath(store.folder, file),
                         sha256: hash.digest("hex"), // if offset > 0, this is signature of only part of the file
                         offset: dataOffset,
                         size: octets,
@@ -1086,7 +1092,7 @@ export default function createFtpServer({
                   )
               })
             )
-            .catch((error: NodeJS.ErrnoException) => {
+            .catch((error) => {
               client.emit("command-error", { cmd, error })
               if (error.code === StoreErrors.EPERM) {
                 client.respond("550", "Permission denied")
@@ -1113,13 +1119,13 @@ export default function createFtpServer({
             .then((writeStream: Writable) =>
               getDataSocket().then(
                 (readSocket: Readable) => {
-                  readSocket.on("error", (error: NodeJS.ErrnoException) => {
+                  readSocket.on("error", (error) => {
                     writeStream.destroy()
                     client.emit("command-error", { cmd, error })
                     client.respond("426", `Client connection error"`)
                   })
 
-                  writeStream.on("error", (error: NodeJS.ErrnoException) => {
+                  writeStream.on("error", (error) => {
                     readSocket.destroy()
                     client.emit("command-error", { cmd, error })
                     client.respond("550", `Transfer failed`)
@@ -1149,7 +1155,7 @@ export default function createFtpServer({
                         emitter.emit("upload", {
                           client: clientInfo,
                           username: user.username,
-                          file: joinPath(store.folder, file),
+                          file: resolvePath(store.folder, file),
                           sha256: hash.digest("hex"), // if offset > 0, this is signature of only part of the file
                           overwrite: "overwrite" in writeStream,
                           offset: dataOffset,
@@ -1165,14 +1171,14 @@ export default function createFtpServer({
                 }
               )
             )
-            .catch((error: NodeJS.ErrnoException) => {
+            .catch((error) => {
               client.emit("command-error", { cmd, error })
               if (
                 error.code === StoreErrors.EPERM ||
                 error.code === StoreErrors.EEXIST
               ) {
                 if (error.code === StoreErrors.EEXIST) {
-                  // actually a permissions problem, but accomodating an old test
+                  // actually a permissions problem: overwrite not allowed
                   client.respond("550", "File already exists")
                   return
                 }
@@ -1198,7 +1204,7 @@ export default function createFtpServer({
               renameFile = renamingFunction
               client.respond("350", "File exists")
             },
-            (error: NodeJS.ErrnoException) => {
+            (error) => {
               client.emit("command-error", { cmd, error })
               if (error.code === StoreErrors.EPERM) {
                 client.respond("550", "Permission denied")
@@ -1231,8 +1237,8 @@ export default function createFtpServer({
               emitter.emit("rename", {
                 client: clientInfo,
                 username: user.username,
-                fileFrom: joinPath("/", renameFile.fromFile),
-                fileTo: joinPath(store.folder, file),
+                fileFrom: renameFile.fromFile,
+                fileTo: resolvePath(store.folder, file),
               })
               renameFile = undefined
             },
@@ -1243,7 +1249,7 @@ export default function createFtpServer({
                 error.code === StoreErrors.EEXIST
               ) {
                 if (error.code === StoreErrors.EEXIST) {
-                  // actually a permissions problem, but accomodating an old test
+                  // actually a permissions problem: overwrite not allowed
                   client.respond("550", "File already exists")
                   return
                 }
@@ -1257,8 +1263,7 @@ export default function createFtpServer({
                 return
               }
 
-              // client.respond("501", "Command failed")
-              client.respond("550", "File rename failed")
+              client.respond("501", "Command failed")
             }
           )
         },
@@ -1272,7 +1277,7 @@ export default function createFtpServer({
               emitter.emit("modify", {
                 client: clientInfo,
                 username: user.username,
-                file: joinPath(store.folder, file),
+                file: resolvePath(store.folder, file),
                 fstatOriginal,
                 fstatNew,
               })
@@ -1300,7 +1305,6 @@ export default function createFtpServer({
 
     // method aliases
     Object.assign(authenticatedMethods, {
-      QUIT: preAuthMethods.QUIT,
       RMDA: authenticatedMethods.RMD,
       MLSD: authenticatedMethods.LIST,
       NLST: authenticatedMethods.LIST,

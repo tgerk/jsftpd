@@ -202,7 +202,7 @@ test("test RNFR/RNTO message using handlers failing", async () => {
   )
 
   expect(await cmdSocket.command("RNTO someotherfile").response()).toBe(
-    "550 File rename failed"
+    "501 Command failed"
   )
 
   expect(fileRename).toBeCalledTimes(1)

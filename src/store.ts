@@ -350,8 +350,7 @@ export default ({ basefolder }: { basefolder: AbsolutePath }) =>
                   },
                 })
 
-                Object.assign(wrapper, { overwrite })
-                  .pipe(innerStream)
+                Object.assign(wrapper, { overwrite }).pipe(innerStream)
 
                 if (seek) {
                   // copy offset bytes from source file

@@ -16,7 +16,7 @@ import {
 import fs from "node:fs/promises"
 import type { Stats as FsStats } from "node:fs"
 import type { Socket } from "node:net"
-import { Readable, Writable } from "node:stream"
+import { PassThrough, Readable, Writable } from "node:stream"
 
 import type { Credential } from "./auth.js"
 
@@ -312,43 +312,57 @@ export default ({ basefolder }: { basefolder: AbsolutePath }) =>
 
               return isFile
             })
-            .then((isFile) =>
+            .then((overwrite) =>
               isFolder(dirname(file), true).then(() => {
                 // write stream to a temp location and on success rename/replace named file, drop temp file on failure
                 const tmpFile = `${file}+${new Date().getMilliseconds()}`,
-                  stream = createWriteStream(tmpFile, { flags: "wx" }).on(
-                    "open",
-                    async function onOpen() {
-                      function onClose() {
-                        fs.unlink(tmpFile)
-                      }
-
-                      this.once("close", onClose).once(
-                        "finish",
-                        function onFinish() {
-                          this.off("close", onClose)
-
-                          // prettier-ignore
-                          fs.unlink(file).catch(() => undefined)
-                          .then(() => fs.link(tmpFile, file))
-                          .then(() => fs.unlink(tmpFile))
-                        }
-                      )
+                  innerStream = createWriteStream(tmpFile, {
+                    flags: "wx",
+                  }).on("open", function () {
+                    function onCleanup() {
+                      fs.unlink(tmpFile)
                     }
-                  )
 
-                if (isFile) Object.assign(stream, { overwrite: true })
+                    async function onFinish() {
+                      this.off("close", onCleanup)
+
+                      // rename temp file to final location
+                      try {
+                        if (overwrite) await fs.unlink(file)
+                        await fs
+                          .link(tmpFile, file)
+                          .then(() => fs.unlink(tmpFile))
+                        innerStream.emit("complete")
+                      } catch (error) {
+                        innerStream.emit("error", error)
+                      }
+                    }
+
+                    this.once("close", onCleanup).once("finish", onFinish)
+                  })
+
+                // innerStream rename should be complete before wrapper's "finish" event is emitted
+                const wrapper = new PassThrough({
+                  // intercept end of input, end the inner stream & continue when temp file has been renamed
+                  flush(next) {
+                    innerStream.on("complete", next).on("error", next)
+                    this.push(null)
+                  },
+                })
+
+                Object.assign(wrapper, { overwrite })
+                  .pipe(innerStream)
 
                 if (seek) {
                   // copy offset bytes from source file
                   return new Promise((resolve) =>
                     createReadStream(file, { end: seek })
-                      .on("end", () => resolve(stream))
-                      .pipe(this, { end: false })
+                      .on("end", () => resolve(wrapper))
+                      .pipe(innerStream, { end: false })
                   )
                 }
 
-                return stream
+                return wrapper
               })
             )
         )

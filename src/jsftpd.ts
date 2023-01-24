@@ -287,6 +287,45 @@ export default function createFtpServer({
     authenticate = authFactory(options)
   })
 
+  // iterator providing a lease on an available port number, receiver needs to release the port number when done
+  // in case the range includes with any port in use, Server.listen will fail and that port need not be returned to the Set
+  // TODO: tests are unhappy:
+  //  ports are used in sequence, not always starting with minDataPort: unexpected by tests that call PASV/EPSV more than once
+  //  many instances of server are using the same block of ports, one failed test will block a port & fail a bunch of other tests
+  const dataPorts: AsyncIterator<number & { release: () => void }> =
+    (function () {
+      let iter: Iterator<number>
+      const set = new Set(
+        Array.from(Array(maxConnections).keys()).map((i) => i + minDataPort)
+      )
+      return {
+        async next() {
+          iter = iter ?? set.values() // restart the iterator after starvation
+          const { done, value } = iter.next()
+          if (done) {
+            // Set is empty!
+            iter = undefined
+
+            // TODO: try an exponential backoff until ports have been released?
+            //  use an event emitter to promptly detect when ports are released?
+            //  should not defer forever:  client should not be left hanging
+
+            // preserve previous behavior
+            return Promise.reject(Error("exceeded maxConnections"))
+          }
+
+          set.delete(value)
+          return {
+            value: Object.assign(value, {
+              release() {
+                set.add(value)
+              },
+            }),
+          }
+        },
+      }
+    })()
+
   if (server) {
     if (server instanceof TLSServer) {
       server.on("secureConnection", FtpSessionHandler)
@@ -425,59 +464,35 @@ export default function createFtpServer({
 
       dataServer.maxConnections = 1
 
-      return selectDataPort(minDataPort, maxConnections).then(
-        (port) =>
+      return dataPorts.next().then(
+        ({ value: port }) =>
           // promisify net.Server.listen()
           new Promise((resolve, reject) => {
             // TODO listen to same address as server or secureServer
+
             dataServer
               .on("error", reject)
-              .listen(port, function onListening(this: typeof dataServer) {
-                emitter.emit("debug", `data server listening ${JSON.stringify(this.address())}`, { client, dataServer: this }) // prettier-ignore
+              .listen(
+                Number(port),
+                function onListening(this: typeof dataServer) {
+                  emitter.emit("debug", `data server listening ${JSON.stringify(this.address())}`, { client, dataServer: this }) // prettier-ignore
 
-                resolve(
-                  this.off("error", reject)
-                    .on("error", function (error) {
-                      client.emit("port-error", "data server", { error, client, dataServer: this }) // prettier-ignore
-                    })
-                    .on("close", function () {
-                      // when closed, this.address() returns null
-                      emitter.emit("debug", `closed data server port[${port}]`, { client, dataServer: this }) // prettier-ignore
-                    })
-                )
-              })
+                  resolve(
+                    this.off("error", reject)
+                      .on("error", function (error) {
+                        client.emit("port-error", "data server", { error, client, dataServer: this }) // prettier-ignore
+                      })
+                      .on("close", function () {
+                        port.release()
+
+                        // when closed, this.address() returns null
+                        emitter.emit("debug", `closed data server port[${Number(port)}]`, { client, dataServer: this }) // prettier-ignore
+                      })
+                  )
+                }
+              )
           })
       )
-
-      // TODO: avoid port scanning
-      function selectDataPort(minDataPort: number, maxConnections: number) {
-        return new Promise<number>((resolve, reject) => {
-          // TODO: if minDataPort is not set, ignore maxConnections & just listen on a random port, stateful firewalls can cope
-          // port-based firewalls want a block of ports from min to min+max
-          if (minDataPort <= 0 || minDataPort > 65535) {
-            reject(Error("minDataPort out-of-range 1-65535"))
-            return
-          }
-
-          ;(function checkAvailablePort(port: number) {
-            createServer()
-              .once("error", function () {
-                if (port >= minDataPort + maxConnections) {
-                  reject(Error("exceeded maxConnections"))
-                  return
-                }
-
-                checkAvailablePort(port + 1) // continue port scan
-              })
-              .once("close", function () {
-                resolve(port)
-              })
-              .listen(port, function () {
-                this.close()
-              })
-          })(minDataPort)
-        })
-      }
     }
 
     function getDataSocket() {

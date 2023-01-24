@@ -119,11 +119,11 @@ test("test STOR message OK", async () => {
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort}|)`
+    `229 Entering extended passive mode (|||${dataPort+1}|)`
   )
 
   dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
+  await dataSocket.connect(dataPort+1, localhost)
 
   cmdSocket.command("MLSD")
 
@@ -213,11 +213,11 @@ test("test STOR message with ASCII", async () => {
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort}|)`
+    `229 Entering extended passive mode (|||${dataPort+1}|)`
   )
 
   dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort, localhost)
+  await dataSocket.connect(dataPort+1, localhost)
 
   cmdSocket.command("MLSD")
 

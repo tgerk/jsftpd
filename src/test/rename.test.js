@@ -111,7 +111,7 @@ test("test RNFR/RNTO message", async () => {
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort}|)`
+    `229 Entering extended passive mode (|||${dataPort+1}|)`
   )
 
   expect(await cmdSocket.command("MLSD").response()).toMatch(
@@ -119,7 +119,7 @@ test("test RNFR/RNTO message", async () => {
   )
 
   dataSocket = new ExpectSocket()
-  const data = await dataSocket.connect(dataPort, localhost).receive()
+  const data = await dataSocket.connect(dataPort+1, localhost).receive()
   expect(data).toMatch("type=file")
   expect(data).toMatch("size=15")
   expect(data).toMatch("someotherfile")

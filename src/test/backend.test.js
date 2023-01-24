@@ -140,10 +140,10 @@ test("test inbound filename transformation", async () => {
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort}|)`
+    `229 Entering extended passive mode (|||${dataPort+1}|)`
   )
 
-  dataSocket.connect(dataPort, localhost)
+  dataSocket.connect(dataPort+1, localhost)
 
   await cmdSocket.command("NLST")
 

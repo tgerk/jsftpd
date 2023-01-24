@@ -27,7 +27,12 @@ export function getCmdPortTLS() {
 }
 
 export function getDataPort() {
-  return parseInt(NODE_MAJOR_VERSION + "120")
+  return parseInt(
+    NODE_MAJOR_VERSION +
+      Math.floor(990 * Math.random())
+        .toString()
+        .padStart(3, "0")
+  )
 }
 
 export class ExpectServer {

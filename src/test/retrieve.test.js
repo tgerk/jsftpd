@@ -176,7 +176,7 @@ test("test RETR message with ASCII", async () => {
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort+1}|)`
+    `229 Entering extended passive mode (|||${dataPort + 1}|)`
   )
 
   expect(await cmdSocket.command("RETR /someotherfile").response()).toBe(
@@ -188,7 +188,7 @@ test("test RETR message with ASCII", async () => {
   )
 
   dataSocket = new ExpectSocket()
-  expect(await dataSocket.connect(dataPort+1, localhost).receive()).toMatch(
+  expect(await dataSocket.connect(dataPort + 1, localhost).receive()).toMatch(
     "SOMETESTCONTENT"
   )
 
@@ -321,7 +321,7 @@ test("test RETR message with handler fails", async () => {
   )
 
   expect(await cmdSocket.command("EPSV").response()).toBe(
-    `229 Entering extended passive mode (|||${dataPort+1}|)`
+    `229 Entering extended passive mode (|||${dataPort + 1}|)`
   )
 
   expect(await cmdSocket.command("RETR mytestfile").response()).toMatch(
@@ -329,7 +329,7 @@ test("test RETR message with handler fails", async () => {
   )
 
   dataSocket = new ExpectSocket()
-  await dataSocket.connect(dataPort+1, localhost)
+  await dataSocket.connect(dataPort + 1, localhost)
   expect(await dataSocket.receive()).toBe("")
 
   expect(await cmdSocket.response()).toMatch("550 Transfer failed")

@@ -26,7 +26,7 @@ const john = {
 test("test PASV message takes next free port", async () => {
   server = createFtpServer({
     port: cmdPortTCP,
-    minDataPort: cmdPortTCP+1,
+    minDataPort: cmdPortTCP + 1,
     user: [john],
     allowLoginWithoutPassword: true,
     maxConnections: 1,
@@ -110,7 +110,7 @@ test("test PASV message fails port range fails", async () => {
 test("test EPSV message takes next free port", async () => {
   server = createFtpServer({
     port: cmdPortTCP,
-    minDataPort: cmdPortTCP+1,
+    minDataPort: cmdPortTCP + 1,
     user: [john],
     allowLoginWithoutPassword: true,
     maxConnections: 1,
